@@ -1,0 +1,737 @@
+// Prisma schema — multi-tenant SaaS platform (Postgres + pgvector)
+//
+// All JSON columns use the native `Json` type.
+// Embeddings on CustomRow are added via raw SQL after `prisma db push`
+// (Prisma doesn't yet have first-class pgvector support).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUSINESS TYPES (catalog of supported verticals)
+// ─────────────────────────────────────────────────────────────────────────────
+model BusinessType {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  description  String
+  icon         String
+  accentColor  String
+  templateJson Json
+  createdAt    DateTime @default(now())
+  tenants      Tenant[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TENANT (a business signed up on the platform)
+// ─────────────────────────────────────────────────────────────────────────────
+model Tenant {
+  id             String       @id @default(cuid())
+  slug           String       @unique
+  name           String
+  businessTypeId String
+  businessType   BusinessType @relation(fields: [businessTypeId], references: [id])
+  currency       String       @default("INR")
+  locale         String       @default("en-IN")
+  taxLabel       String       @default("GST")
+  taxRate        Float        @default(18.0)
+  gstinTurnover  Float        @default(0) // self-declared; gates GST e-invoicing
+  region         String       @default("IN") // IN | MENA — for region router
+  brandColor     String       @default("#6366f1")
+  logoUrl        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  users               User[]
+  roles               Role[]
+  customTables        CustomTable[]
+  proposals           Proposal[]
+  contacts            Contact[]
+  invoices            Invoice[]
+  invoiceSequences    InvoiceSequence[]
+  payments            Payment[]
+  signatureRequests   SignatureRequest[]
+  aiConfig            TenantAIConfig?
+  pipelines           Pipeline[]
+  leads               Lead[]
+  files               FileObject[]
+  galleries           Gallery[]
+  documents           Document[]
+  calendarEvents      CalendarEvent[]
+  accountingConns     AccountingConnection[]
+  accountingSyncLogs  AccountingSyncLog[]
+  chatThreads         ChatThread[]
+  messages            Message[]
+  webhookEvents       WebhookEvent[]
+  notifications       Notification[]
+  portalTemplates     PortalTemplate[]
+
+  @@index([businessTypeId])
+  @@index([region])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLES & USERS
+// ─────────────────────────────────────────────────────────────────────────────
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  permissions Json
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  users User[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleId       String
+  role         Role      @relation(fields: [roleId], references: [id])
+  email        String
+  passwordHash String?
+  fullName     String
+  phone        String?
+  avatarUrl    String?
+  status       String    @default("ACTIVE") // ACTIVE | INVITED | SUSPENDED
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  proposals    Proposal[]      @relation("CreatedBy")
+  resetTokens  PasswordReset[]
+  invites      UserInvite[]    @relation("InvitedBy")
+  activities   Activity[]
+  messages     Message[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([email])
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model UserInvite {
+  id          String    @id @default(cuid())
+  tenantId    String
+  email       String
+  roleId      String
+  invitedById String
+  invitedBy   User      @relation("InvitedBy", fields: [invitedById], references: [id])
+  token       String    @unique
+  fullName    String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, email])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DYNAMIC SCHEMA ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+model CustomTable {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slug        String
+  name        String
+  description String?
+  icon        String   @default("Package")
+  isSystem    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  columns CustomColumn[]
+  rows    CustomRow[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+}
+
+model CustomColumn {
+  id           String      @id @default(cuid())
+  tableId      String
+  table        CustomTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  slug         String
+  name         String
+  type         String
+  required     Boolean     @default(false)
+  unique       Boolean     @default(false)
+  defaultValue String?
+  optionsJson  Json?
+  sortOrder    Int         @default(0)
+  helpText     String?
+  createdAt    DateTime    @default(now())
+
+  @@unique([tableId, slug])
+  @@index([tableId])
+}
+
+model CustomRow {
+  id              String      @id @default(cuid())
+  tableId         String
+  table           CustomTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  data            Json
+  embeddingDirty  Boolean     @default(true) // true = needs (re)embed
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  // embedding column (vector) added via raw SQL — see prisma/post-push.sql
+
+  @@index([tableId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM — contacts + pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+model Contact {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fullName  String
+  email     String?
+  phone     String?
+  company   String?
+  notes     String?
+  source    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  proposals  Proposal[]
+  leads      Lead[]
+  activities Activity[]
+  chatThreads ChatThread[]
+
+  @@index([tenantId])
+}
+
+model Pipeline {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  stages    Stage[]
+  leads     Lead[]
+
+  @@index([tenantId])
+}
+
+model Stage {
+  id         String   @id @default(cuid())
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  name       String
+  sortOrder  Int      @default(0)
+  isClosedWon Boolean @default(false)
+  isClosedLost Boolean @default(false)
+  color      String   @default("#8b5cf6")
+  leads      Lead[]
+
+  @@index([pipelineId])
+}
+
+model Lead {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipelineId  String
+  pipeline    Pipeline  @relation(fields: [pipelineId], references: [id])
+  stageId     String
+  stage       Stage     @relation(fields: [stageId], references: [id])
+  contactId   String?
+  contact     Contact?  @relation(fields: [contactId], references: [id])
+  title       String
+  source      String?
+  value       Float     @default(0)
+  score       Int       @default(0) // 0-100
+  expectedCloseAt DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  activities Activity[]
+
+  @@index([tenantId])
+  @@index([stageId])
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  leadId    String?
+  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type      String // NOTE | CALL | EMAIL | MEETING | TASK | STAGE_CHANGE
+  title     String
+  body      String?
+  meta      Json?
+  dueAt     DateTime?
+  doneAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([leadId])
+  @@index([contactId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPOSALS
+// ─────────────────────────────────────────────────────────────────────────────
+model Proposal {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId      String?
+  contact        Contact?  @relation(fields: [contactId], references: [id])
+  createdById    String
+  createdBy      User      @relation("CreatedBy", fields: [createdById], references: [id])
+  title          String
+  brief          String
+  parsedBrief    Json?     // Stage A output
+  contentJson    Json
+  subtotal       Float     @default(0)
+  taxAmount      Float     @default(0)
+  discount       Float     @default(0)
+  total          Float     @default(0)
+  shareToken     String    @unique @default(cuid())
+  status         String    @default("DRAFT")
+  expiresAt      DateTime?
+  clientName     String?
+  clientEmail    String?
+  currentVersion Int       @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  sentAt         DateTime?
+  acceptedAt     DateTime?
+
+  versions          ProposalVersion[]
+  events            ProposalEvent[]
+  invoices          Invoice[]
+  signatureRequests SignatureRequest[]
+  chatThreads       ChatThread[]
+  galleries         Gallery[]
+  documents         Document[]
+
+  @@index([tenantId])
+  @@index([shareToken])
+}
+
+model ProposalVersion {
+  id          String   @id @default(cuid())
+  proposalId  String
+  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  version     Int
+  contentJson Json
+  subtotal    Float
+  taxAmount   Float
+  discount    Float
+  total       Float
+  authoredBy  String
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@unique([proposalId, version])
+  @@index([proposalId])
+}
+
+model ProposalEvent {
+  id         String   @id @default(cuid())
+  proposalId String
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  type       String
+  payload    Json?
+  actor      String
+  createdAt  DateTime @default(now())
+
+  @@index([proposalId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI CONFIG (per tenant)
+// ─────────────────────────────────────────────────────────────────────────────
+model TenantAIConfig {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tone                 String   @default("warm-professional") // warm-professional | casual | luxury | minimal
+  upsellAggressiveness Int      @default(2) // 0-3
+  marginFloorPct       Float    @default(0)
+  mandatoryItemSlugs   Json     @default("[]")
+  blacklistedItemSlugs Json     @default("[]")
+  customInstructions   String?
+  embeddingModel       String   @default("voyage-3") // voyage-3 (1024d) | openai-3-small (1536d)
+  embeddingDim         Int      @default(1024)
+  updatedAt            DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVOICING & PAYMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+model InvoiceSequence {
+  id            String  @id @default(cuid())
+  tenantId      String
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  series        String  @default("INV")
+  financialYear String  // 2026-27
+  counter       Int     @default(0)
+
+  @@unique([tenantId, series, financialYear])
+  @@index([tenantId])
+}
+
+model Invoice {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId      String?
+  proposal        Proposal? @relation(fields: [proposalId], references: [id])
+  contactId       String?
+  number          String?   // assigned at SENT, locked thereafter
+  series          String    @default("INV")
+  financialYear   String
+  type            String    @default("TAX") // TAX | PROFORMA | RECEIPT | CREDIT_NOTE | DEBIT_NOTE | DELIVERY_CHALLAN
+  status          String    @default("DRAFT") // DRAFT | SENT | VIEWED | PARTIALLY_PAID | PAID | OVERDUE | VOID
+  placeOfSupply   String    @default("IN-MH") // ISO 3166-2 codes
+  issueDate       DateTime  @default(now())
+  dueDate         DateTime?
+  contentJson     Json
+  subtotal        Float     @default(0)
+  cgst            Float     @default(0)
+  sgst            Float     @default(0)
+  igst            Float     @default(0)
+  total           Float     @default(0)
+  amountPaid      Float     @default(0)
+  irn             String? // GST IRN if e-invoiced
+  irnQrCode       String? // base64 QR
+  pdfFileId       String?
+  remindersSent   Int       @default(0)
+  syncStatus      String? // PENDING | SYNCED | FAILED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  sentAt          DateTime?
+
+  payments    Payment[]
+  creditNotes Invoice[] @relation("CreditNoteOf")
+  voidOf      Invoice?  @relation("CreditNoteOf", fields: [voidOfId], references: [id])
+  voidOfId    String?
+
+  @@unique([tenantId, series, financialYear, number])
+  @@index([tenantId])
+  @@index([proposalId])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId     String?
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id])
+  amount        Float
+  currency      String   @default("INR")
+  method        String   // UPI | CARD | NETBANKING | BANK_TRANSFER | CASH | CHEQUE
+  status        String   @default("PENDING") // PENDING | SUCCESS | FAILED | REFUNDED
+  provider      String? // razorpay | stripe | tap | manual
+  providerRef   String? // gateway txn id
+  providerOrderId String?
+  paidAt        DateTime?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  webhooks PaymentWebhook[]
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@index([providerRef])
+}
+
+model PaymentWebhook {
+  id         String   @id @default(cuid())
+  paymentId  String?
+  payment    Payment? @relation(fields: [paymentId], references: [id])
+  provider   String
+  eventType  String
+  externalId String   @unique // dedupe across deliveries
+  payload    Json
+  processedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([provider, eventType])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E-SIGN
+// ─────────────────────────────────────────────────────────────────────────────
+model SignatureRequest {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId  String?
+  proposal    Proposal? @relation(fields: [proposalId], references: [id])
+  provider    String    @default("digio") // digio | docusign | mock
+  externalId  String? // provider's request id
+  signerName  String
+  signerEmail String
+  signerPhone String?
+  documentFileId String?
+  signedFileId   String?
+  status      String    @default("PENDING") // PENDING | SENT | SIGNED | EXPIRED | DECLINED
+  signedAt    DateTime?
+  expiresAt   DateTime?
+  payload     Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([externalId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FILES
+// ─────────────────────────────────────────────────────────────────────────────
+model FileObject {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storageKey   String   @unique // e.g. tenants/<id>/files/<uuid>.pdf
+  filename     String
+  mimeType     String
+  bytes        Int
+  width        Int?
+  height       Int?
+  uploadedById String?
+  visibility   String   @default("PRIVATE") // PRIVATE | TENANT | PUBLIC
+  meta         Json?
+  createdAt    DateTime @default(now())
+
+  galleryItems GalleryItem[]
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GALLERIES & DOCUMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+model Gallery {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  title      String
+  description String?
+  visibility String    @default("CLIENT") // CLIENT | TENANT
+  createdAt  DateTime  @default(now())
+  items      GalleryItem[]
+
+  @@index([tenantId])
+}
+
+model GalleryItem {
+  id        String     @id @default(cuid())
+  galleryId String
+  gallery   Gallery    @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  fileId    String
+  file      FileObject @relation(fields: [fileId], references: [id])
+  sortOrder Int        @default(0)
+  approved  Boolean?
+  clientNote String?
+
+  @@index([galleryId])
+}
+
+model Document {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  category   String   @default("OTHER") // CONTRACT | VISA | INVOICE_PDF | RECEIPT | OTHER
+  title      String
+  fileId     String?
+  meta       Json?
+  status     String   @default("DRAFT") // DRAFT | REQUESTED | UPLOADED | APPROVED | REJECTED
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMUNICATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+model ChatThread {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  contactId  String?
+  contact    Contact?  @relation(fields: [contactId], references: [id])
+  channel    String    @default("PORTAL") // PORTAL | WHATSAPP | EMAIL
+  externalId String? // e.g. WhatsApp phone or thread id
+  lastMessageAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  messages Message[]
+
+  @@index([tenantId])
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  threadId   String
+  thread     ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String? // null = client
+  user       User?    @relation(fields: [userId], references: [id])
+  direction  String // INBOUND | OUTBOUND
+  body       String
+  attachments Json?
+  status     String   @default("SENT") // QUEUED | SENT | DELIVERED | READ | FAILED
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([threadId])
+  @@index([tenantId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALENDAR
+// ─────────────────────────────────────────────────────────────────────────────
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  startAt     DateTime
+  endAt       DateTime
+  allDay      Boolean  @default(false)
+  location    String?
+  type        String   @default("BLOCKED") // BLOCKED | BOOKING | INTERNAL
+  externalId  String? // google calendar event id
+  meta        Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, startAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCOUNTING
+// ─────────────────────────────────────────────────────────────────────────────
+model AccountingConnection {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider    String // zoho | quickbooks | xero | tally | odoo
+  accessToken String?
+  refreshToken String?
+  expiresAt   DateTime?
+  meta        Json?
+  status      String   @default("CONNECTED") // CONNECTED | EXPIRED | DISCONNECTED
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, provider])
+}
+
+model AccountingSyncLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider    String
+  entityType  String // invoice | payment | contact
+  entityId    String
+  status      String // PENDING | OK | FAILED | RETRYING
+  externalId  String?
+  payload     Json?
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([provider, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PORTAL BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+model PortalTemplate {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  isDefault  Boolean  @default(false)
+  themeJson  Json    // { primary, accent, font, ... }
+  sectionsJson Json  // ordered sections with config
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEBHOOKS & NOTIFICATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  source      String // razorpay | stripe | whatsapp | digio | ...
+  externalId  String   @unique
+  eventType   String
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, source])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  type      String
+  title     String
+  body      String?
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, userId])
+  @@index([createdAt])
+}

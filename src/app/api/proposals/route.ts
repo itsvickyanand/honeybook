@@ -1,0 +1,77 @@
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { requireApi } from '@/lib/api';
+import { prisma } from '@/lib/db';
+import { runProposalPipeline } from '@/lib/ai/pipeline';
+import { computeTotals } from '@/lib/proposal-schema';
+import { enqueue, JOB_NAMES } from '@/lib/queue';
+
+const schema = z.object({
+  title: z.string().min(1).max(160),
+  brief: z.string().min(10).max(4000),
+  clientName: z.string().min(1).max(120),
+  clientEmail: z.string().email().optional().or(z.literal('')).optional(),
+  contactId: z.string().optional(),
+});
+
+export async function POST(req: Request) {
+  const auth = await requireApi('proposal.create');
+  if ('error' in auth) return auth.error;
+  const parsed = schema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
+
+  // Kick off embedding builds for any dirty catalog rows (non-blocking).
+  prisma.customRow.findMany({
+    where: { table: { tenantId: auth.tenant.id }, embeddingDirty: true },
+    select: { id: true },
+    take: 50,
+  }).then((dirty) => {
+    for (const r of dirty) enqueue(JOB_NAMES.EMBEDDINGS_BUILD_ROW, { rowId: r.id });
+  }).catch(() => {});
+
+  const { doc, parsedBrief, issues } = await runProposalPipeline({
+    tenantId: auth.tenant.id,
+    brief: parsed.data.brief,
+    clientName: parsed.data.clientName,
+  });
+  doc.title = parsed.data.title;
+  const totals = computeTotals(doc);
+
+  const proposal = await prisma.proposal.create({
+    data: {
+      tenantId: auth.tenant.id,
+      createdById: auth.user.id,
+      contactId: parsed.data.contactId,
+      title: parsed.data.title,
+      brief: parsed.data.brief,
+      parsedBrief: parsedBrief as object,
+      clientName: parsed.data.clientName,
+      clientEmail: parsed.data.clientEmail || null,
+      contentJson: doc as unknown as object,
+      subtotal: totals.subtotal,
+      taxAmount: totals.taxAmount,
+      discount: totals.discount,
+      total: totals.total,
+      status: 'DRAFT',
+      currentVersion: 1,
+      versions: {
+        create: {
+          version: 1,
+          contentJson: doc as unknown as object,
+          subtotal: totals.subtotal,
+          taxAmount: totals.taxAmount,
+          discount: totals.discount,
+          total: totals.total,
+          authoredBy: auth.user.id,
+          note: 'Initial AI generation',
+        },
+      },
+    },
+  });
+
+  return NextResponse.json({
+    proposal: { id: proposal.id, shareToken: proposal.shareToken },
+    parsedBrief,
+    issues,
+  });
+}

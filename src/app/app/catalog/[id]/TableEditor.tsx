@@ -10,6 +10,7 @@ import Papa from 'papaparse';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { FileUpload } from '@/components/ui/FileUpload';
 import { formatCurrency } from '@/lib/utils';
 
 export interface Column {
@@ -404,6 +405,14 @@ function FieldRenderer({
           ))}
         </Select>
       );
+    case 'IMAGE_URL':
+      return (
+        <ImageUrlField
+          label={col.name + (col.required ? ' *' : '')}
+          value={(value as string) ?? ''}
+          onChange={onChange}
+        />
+      );
     case 'MULTI_SELECT': {
       const arr = (value as string[]) ?? [];
       return (
@@ -725,5 +734,36 @@ function CsvImportModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+function ImageUrlField({ label, value, onChange }: { label: string; value: string; onChange: (v: unknown) => void }) {
+  return (
+    <div>
+      <label className="label-base">{label}</label>
+      <div className="flex items-center gap-3">
+        {value ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={value} alt="" className="h-16 w-16 rounded object-cover border" />
+        ) : (
+          <div className="h-16 w-16 rounded border bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-muted)]">
+            No image
+          </div>
+        )}
+        <div className="flex-1 space-y-2">
+          <Input
+            placeholder="https://… or upload below"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <FileUpload
+            compact
+            accept="image/*"
+            prefix="catalog"
+            onUploaded={(f) => onChange(f.url)}
+          />
+        </div>
+      </div>
+    </div>
   );
 }

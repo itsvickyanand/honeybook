@@ -29,12 +29,13 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<Cr
   const id = process.env.RAZORPAY_KEY_ID;
   const secret = process.env.RAZORPAY_KEY_SECRET;
   if (!id || !secret) {
-    // Dev mock: return a fake link so the UI can render the "pay" CTA.
     const mockId = `plink_mock_${args.reference}`;
     logger.warn({ reference: args.reference }, 'razorpay.mock-mode');
+    const back = args.callbackUrl ?? '';
+    const backParam = back ? `&back=${encodeURIComponent(back)}` : '';
     return {
       providerOrderId: mockId,
-      shortUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/mock-pay?ref=${args.reference}`,
+      shortUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/mock-pay?ref=${args.reference}${backParam}`,
       mock: true,
     };
   }

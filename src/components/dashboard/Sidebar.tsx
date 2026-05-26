@@ -14,6 +14,8 @@ import {
   Receipt,
   Kanban,
   BarChart3,
+  MessageSquare,
+  Inbox,
 } from 'lucide-react';
 import * as React from 'react';
 import { cn } from '@/lib/utils';
@@ -36,6 +38,8 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Receipt,
   Kanban,
   BarChart3,
+  MessageSquare,
+  Inbox,
 };
 
 export function Sidebar({

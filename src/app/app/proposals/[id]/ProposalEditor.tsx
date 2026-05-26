@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Send, Copy, ExternalLink, Save, Plus, Trash2, History, Receipt,
+  Send, Copy, ExternalLink, Save, Plus, Trash2, History, Receipt, AlertTriangle, Info, XCircle, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
@@ -30,6 +30,8 @@ interface EventLog {
   createdAt: string;
 }
 
+interface AIIssue { severity: string; code: string; message: string; itemId?: string }
+
 export function ProposalEditor({
   proposalId,
   shareToken,
@@ -39,6 +41,7 @@ export function ProposalEditor({
   initialDoc,
   initialStatus,
   events,
+  aiIssues = [],
 }: {
   proposalId: string;
   shareToken: string;
@@ -49,6 +52,7 @@ export function ProposalEditor({
   initialDoc: ProposalDoc;
   initialStatus: string;
   events: EventLog[];
+  aiIssues?: AIIssue[];
 }) {
   const router = useRouter();
   const [doc, setDoc] = React.useState<ProposalDoc>(initialDoc);
@@ -161,6 +165,9 @@ export function ProposalEditor({
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="lg:col-span-2 space-y-6">
+        {/* AI issues banner */}
+        {aiIssues.length > 0 && <AIIssuesBanner issues={aiIssues} />}
+
         {/* Header card */}
         <div className="card p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -339,6 +346,11 @@ export function ProposalEditor({
               <Receipt className="h-4 w-4" /> Convert to invoice
             </Button>
           )}
+          {status === 'CHANGES_REQUESTED' && (
+            <Link href={`/app/proposals/${proposalId}/changes`} className="btn-secondary">
+              Review client changes
+            </Link>
+          )}
         </div>
 
         <PricingSummary doc={doc} locale={locale} />
@@ -414,5 +426,40 @@ function ListEditor({ title, items, onChange }: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function AIIssuesBanner({ issues }: { issues: AIIssue[] }) {
+  const [open, setOpen] = React.useState(true);
+  const errors = issues.filter((i) => i.severity === 'ERROR');
+  const warns = issues.filter((i) => i.severity === 'WARN');
+  const tone = errors.length
+    ? 'border-red-500/40 bg-red-500/10 text-red-200'
+    : 'border-amber-500/40 bg-amber-500/10 text-amber-200';
+  const Icon = errors.length ? XCircle : AlertTriangle;
+  return (
+    <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={`card p-4 border ${tone}`}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 text-left">
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="font-medium">
+          {errors.length > 0
+            ? `${errors.length} ${errors.length === 1 ? 'issue' : 'issues'} found`
+            : `${warns.length} ${warns.length === 1 ? 'warning' : 'warnings'}`}
+          {warns.length > 0 && errors.length > 0 && ` · ${warns.length} warning${warns.length === 1 ? '' : 's'}`}
+        </span>
+        <span className="text-xs opacity-70 ml-auto">AI review</span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {issues.map((it, i) => (
+            <li key={i} className="flex items-start gap-2">
+              {it.severity === 'ERROR' ? <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> : <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+              <span><span className="opacity-70">[{it.code}]</span> {it.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </motion.div>
   );
 }

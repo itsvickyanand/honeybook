@@ -23,6 +23,9 @@ import { handleGstIrnGenerate } from './handlers/gst';
 import { handlePaymentReconcile } from './handlers/payments';
 import { handleNotificationDispatch } from './handlers/notification';
 import { handleWebhookOutbound } from './handlers/webhook';
+import { handleOverdueSweep } from './handlers/overdue';
+import { handleDripStep } from './handlers/drip';
+import { registerSchedules } from '../lib/queue-scheduler';
 
 const HANDLERS: Record<string, (job: Job) => Promise<unknown>> = {
   [JOB_NAMES.EMAIL_SEND]: handleEmailSend,
@@ -37,6 +40,8 @@ const HANDLERS: Record<string, (job: Job) => Promise<unknown>> = {
   [JOB_NAMES.PAYMENT_RECONCILE]: handlePaymentReconcile,
   [JOB_NAMES.NOTIFICATION_DISPATCH]: handleNotificationDispatch,
   [JOB_NAMES.WEBHOOK_OUTBOUND]: handleWebhookOutbound,
+  [JOB_NAMES.OVERDUE_SWEEP]: handleOverdueSweep,
+  [JOB_NAMES.DRIP_STEP]: handleDripStep,
 };
 
 async function processor(job: Job) {
@@ -59,6 +64,9 @@ const QUEUE_CONCURRENCY: Record<QueueName, number> = {
   p1: 10, // PDFs, WhatsApp
   p2: 4,  // background: embeddings, accounting
 };
+
+// Register cron schedules once on worker boot
+registerSchedules().catch((e) => logger.error({ err: (e as Error).message }, 'schedules.register-failed'));
 
 const workers: Worker[] = [];
 for (const queue of ['p0', 'p1', 'p2'] as QueueName[]) {

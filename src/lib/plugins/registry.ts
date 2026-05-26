@@ -34,9 +34,20 @@ export function registerPlugin(p: VerticalPlugin) {
 }
 
 export function getPlugin(slug: string): VerticalPlugin | undefined {
+  // Lazy boot the baked-in plugins on first access. This avoids a circular
+  // initialization issue under Turbopack where registry.ts is imported before
+  // the plugin files have fully bound their `registerPlugin` references.
+  ensureBaked();
   return plugins.get(slug);
 }
 
-// Register baked-in plugins
-import './travel';
-import './photography';
+let baked = false;
+function ensureBaked() {
+  if (baked) return;
+  baked = true;
+  // Side-effect imports: each calls registerPlugin()
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./travel');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./photography');
+}

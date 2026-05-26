@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { proposalDocSchema, computeTotals } from '@/lib/proposal-schema';
 import { sendEmail } from '@/lib/comms';
 import { emailProposalSent } from '@/lib/comms/templates';
+import { onProposalStatusChanged } from '@/lib/lifecycle';
 
 async function loadOwned(id: string, tenantId: string) {
   return prisma.proposal.findFirst({ where: { id, tenantId } });
@@ -92,6 +93,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const updated = await prisma.proposal.update({ where: { id }, data });
+
+  // Fan out lifecycle effects if status changed
+  if (parsed.data.status && parsed.data.status !== p.status) {
+    onProposalStatusChanged(updated.id, parsed.data.status, p.status).catch(() => {});
+  }
+
   return NextResponse.json({ proposal: { ...updated, content: updated.contentJson } });
 }
 

@@ -69,23 +69,46 @@ export async function POST(_: Request, { params }: { params: Promise<{ token: st
     });
   }
 
-  // 2. Ensure it's SENT (which allocates a number).
+  // 2. Already fully paid? Short-circuit — no new Payment row, no new link.
+  if (invoice.status === 'PAID' || invoice.amountPaid >= invoice.total) {
+    return NextResponse.json({
+      alreadyPaid: true,
+      invoiceId: invoice.id,
+      number: invoice.number,
+    });
+  }
+
+  // 3. Ensure it's SENT (which allocates a number).
   if (invoice.status === 'DRAFT') {
     invoice = await markInvoiceSent(invoice.id);
   }
 
-  // 3. Create a Payment record + Razorpay link.
-  const payment = await prisma.payment.create({
-    data: {
-      tenantId: invoice.tenantId,
-      invoiceId: invoice.id,
-      amount: invoice.total - invoice.amountPaid,
-      currency: 'INR',
-      method: 'UPI',
-      status: 'PENDING',
-      provider: 'razorpay',
-    },
+  // 4. Reuse an existing PENDING Payment for this invoice if one already exists
+  //    (idempotency — guards against multi-click and tab refresh).
+  const due = Math.max(0, invoice.total - invoice.amountPaid);
+  let payment = await prisma.payment.findFirst({
+    where: { tenantId: invoice.tenantId, invoiceId: invoice.id, status: 'PENDING' },
+    orderBy: { createdAt: 'desc' },
   });
+  if (!payment) {
+    payment = await prisma.payment.create({
+      data: {
+        tenantId: invoice.tenantId,
+        invoiceId: invoice.id,
+        amount: due,
+        currency: 'INR',
+        method: 'UPI',
+        status: 'PENDING',
+        provider: 'razorpay',
+      },
+    });
+  } else if (payment.amount !== due) {
+    // Outstanding has changed since the row was created — refresh the amount.
+    payment = await prisma.payment.update({
+      where: { id: payment.id },
+      data: { amount: due },
+    });
+  }
 
   const link = await createPaymentLink({
     amountInRupees: payment.amount,

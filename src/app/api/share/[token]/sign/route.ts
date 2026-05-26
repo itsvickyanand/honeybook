@@ -38,5 +38,12 @@ export async function POST(_: Request, { params }: { params: Promise<{ token: st
     },
   });
 
-  return NextResponse.json({ signUrl: result.signingUrl, requestId: sig.id });
+  // In mock mode the adapter returns a placeholder; substitute the real
+  // SignatureRequest id + back URL now that we know them.
+  const back = `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${token}`;
+  const signUrl = result.mock
+    ? `${process.env.APP_URL ?? 'http://localhost:3000'}/p/mock-sign?ref=${sig.id}&back=${encodeURIComponent(back)}`
+    : result.signingUrl;
+
+  return NextResponse.json({ signUrl, requestId: sig.id });
 }

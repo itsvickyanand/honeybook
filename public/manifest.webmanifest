@@ -1,0 +1,13 @@
+{
+  "name": "Avantus",
+  "short_name": "Avantus",
+  "description": "AI-powered client experience platform for service businesses",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

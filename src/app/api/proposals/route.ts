@@ -37,14 +37,26 @@ export async function POST(req: Request) {
   doc.title = parsed.data.title;
   const totals = computeTotals(doc);
 
+  // Auto-link to an existing Lead for this contact, if any.
+  let leadId: string | undefined;
+  if (parsed.data.contactId) {
+    const lead = await prisma.lead.findFirst({
+      where: { tenantId: auth.tenant.id, contactId: parsed.data.contactId },
+      orderBy: { createdAt: 'desc' },
+    });
+    leadId = lead?.id;
+  }
+
   const proposal = await prisma.proposal.create({
     data: {
       tenantId: auth.tenant.id,
       createdById: auth.user.id,
       contactId: parsed.data.contactId,
+      leadId,
       title: parsed.data.title,
       brief: parsed.data.brief,
       parsedBrief: parsedBrief as object,
+      aiIssues: issues as unknown as object,
       clientName: parsed.data.clientName,
       clientEmail: parsed.data.clientEmail || null,
       contentJson: doc as unknown as object,

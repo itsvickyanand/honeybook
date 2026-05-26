@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { FileText, Plus, Receipt } from 'lucide-react';
+import { Plus, Receipt } from 'lucide-react';
 import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
@@ -33,6 +33,9 @@ export default async function InvoicesPage() {
               GST-compliant invoicing with concurrency-safe numbering.
             </p>
           </div>
+          <Link href="/app/invoices/new" className="btn-primary">
+            <Plus className="h-4 w-4" /> New invoice
+          </Link>
         </div>
 
         {invoices.length === 0 ? (

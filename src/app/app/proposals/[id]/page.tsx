@@ -17,6 +17,7 @@ export default async function ProposalDetail({ params }: { params: Promise<{ id:
   if (!proposal) notFound();
 
   const doc = proposal.contentJson as unknown as ProposalDoc;
+  const aiIssues = (proposal.aiIssues as Array<{ severity: string; code: string; message: string; itemId?: string }> | null) ?? [];
 
   return (
     <PageTransition>
@@ -36,6 +37,7 @@ export default async function ProposalDetail({ params }: { params: Promise<{ id:
           taxLabel={ctx.tenant.taxLabel}
           initialDoc={doc}
           initialStatus={proposal.status}
+          aiIssues={aiIssues}
           events={proposal.events.map((e) => ({
             id: e.id,
             type: e.type,

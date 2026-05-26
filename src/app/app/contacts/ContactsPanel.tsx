@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import Link from 'next/link';
 
 interface Contact {
   id: string;
@@ -93,8 +94,7 @@ export function ContactsPanel({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.96 }}
-                className="card p-5"
-              >
+              ><Link href={`/app/contacts/${c.id}`} className="card p-5 block hover:border-[var(--color-primary)]/60 transition">
                 <div className="flex items-start gap-3">
                   <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] text-sm font-semibold">
                     {c.fullName.charAt(0).toUpperCase()}
@@ -129,7 +129,7 @@ export function ContactsPanel({
                     {c.notes}
                   </p>
                 )}
-              </motion.div>
+              </Link></motion.div>
             ))}
           </AnimatePresence>
         </div>

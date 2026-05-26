@@ -46,6 +46,7 @@ model Tenant {
   region         String       @default("IN") // IN | MENA — for region router
   brandColor     String       @default("#6366f1")
   logoUrl        String?
+  customDomain   String?      @unique
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -72,6 +73,14 @@ model Tenant {
   webhookEvents       WebhookEvent[]
   notifications       Notification[]
   portalTemplates     PortalTemplate[]
+  leadForms           LeadForm[]
+  scoringRules        LeadScoringRule[]
+  dripSequences       DripSequence[]
+  dripEnrollments     DripEnrollment[]
+  projects            Project[]
+  apiKeys             ApiKey[]
+  outboundWebhooks    OutboundWebhook[]
+  auditLogs           AuditLog[]
 
   @@index([businessTypeId])
   @@index([region])
@@ -108,6 +117,9 @@ model User {
   phone        String?
   avatarUrl    String?
   status       String    @default("ACTIVE") // ACTIVE | INVITED | SUSPENDED
+  totpSecret   String?
+  totpEnabled  Boolean   @default(false)
+  recoveryCodes Json?    // [hashes]
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -226,6 +238,8 @@ model Contact {
   leads      Lead[]
   activities Activity[]
   chatThreads ChatThread[]
+  projects   Project[]
+  dripEnrollments DripEnrollment[]
 
   @@index([tenantId])
 }
@@ -277,6 +291,7 @@ model Lead {
   updatedAt   DateTime  @updatedAt
 
   activities Activity[]
+  proposals  Proposal[]
 
   @@index([tenantId])
   @@index([stageId])
@@ -313,11 +328,14 @@ model Proposal {
   tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contactId      String?
   contact        Contact?  @relation(fields: [contactId], references: [id])
+  leadId         String?
+  lead           Lead?     @relation(fields: [leadId], references: [id])
   createdById    String
   createdBy      User      @relation("CreatedBy", fields: [createdById], references: [id])
   title          String
   brief          String
   parsedBrief    Json?     // Stage A output
+  aiIssues       Json?     // Stage D output [{severity,code,message,itemId?}]
   contentJson    Json
   subtotal       Float     @default(0)
   taxAmount      Float     @default(0)
@@ -734,4 +752,169 @@ model Notification {
 
   @@index([tenantId, userId])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEAD FORMS — public-facing forms a vendor embeds on their website
+// ─────────────────────────────────────────────────────────────────────────────
+model LeadForm {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slug        String   @unique
+  name        String
+  title       String?
+  description String?
+  fieldsJson  Json     // [{name,label,type:'text|email|phone|textarea|select',required,options?}]
+  redirectUrl String?
+  notifyEmails Json?   // [emails] to notify on submission
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEAD SCORING — if/then rules evaluated on lead create/update
+// ─────────────────────────────────────────────────────────────────────────────
+model LeadScoringRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  field     String   // source | value | title (e.g. "source" or "value")
+  op        String   // eq | gt | lt | contains
+  value     String
+  points    Int      // signed delta
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRIP / NURTURE
+// ─────────────────────────────────────────────────────────────────────────────
+model DripSequence {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  trigger     String   // lead.created | proposal.sent | proposal.viewed | manual
+  stepsJson   Json     // [{channel,delayHours,subject?,body,whatsappTemplate?}]
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  enrollments DripEnrollment[]
+
+  @@index([tenantId, trigger])
+}
+
+model DripEnrollment {
+  id              String       @id @default(cuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sequenceId      String
+  sequence        DripSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  contactId       String?
+  contact         Contact?     @relation(fields: [contactId], references: [id])
+  currentStepIdx  Int          @default(0)
+  status          String       @default("ACTIVE") // ACTIVE | PAUSED | COMPLETED | STOPPED
+  startedAt       DateTime     @default(now())
+  lastStepAt      DateTime?
+
+  @@index([tenantId])
+  @@index([sequenceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECTS — group multiple proposals (multi-event weddings)
+// ─────────────────────────────────────────────────────────────────────────────
+model Project {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId   String?
+  contact     Contact? @relation(fields: [contactId], references: [id])
+  name        String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  totalValue  Float    @default(0)
+  status      String   @default("PLANNING") // PLANNING | CONFIRMED | IN_PROGRESS | DONE | CANCELLED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members SharedProjectMember[]
+
+  @@index([tenantId])
+}
+
+// SharedProjectMember — cross-tenant link (planner ↔ sub-vendor) per BRD Fix 1
+model SharedProjectMember {
+  id            String  @id @default(cuid())
+  projectId     String
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  memberTenantId String  // a different tenant than project.tenant
+  role           String // COORDINATOR | VIEWER
+  acceptedAt     DateTime?
+  invitedAt      DateTime @default(now())
+  scopeJson      Json?   // what fields are visible: ['timeline','status','quotedAmount',...]
+
+  @@unique([projectId, memberTenantId])
+  @@index([memberTenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API KEYS + OUTBOUND WEBHOOKS
+// ─────────────────────────────────────────────────────────────────────────────
+model ApiKey {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String   // first 6 chars shown
+  hash        String   // bcrypt hash of the full key
+  scopes      Json     // array of permission strings or 'admin'
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, prefix])
+  @@index([tenantId])
+}
+
+model OutboundWebhook {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url         String
+  events      Json     // ['proposal.accepted','payment.received',...]
+  secret      String
+  active      Boolean  @default(true)
+  failureCount Int      @default(0)
+  lastFailureAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────────────────────────────────────
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  action    String   // create | update | delete | login | export | ...
+  entity    String   // Proposal | Invoice | User | ...
+  entityId  String?
+  diff      Json?    // before/after for updates
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([entity, entityId])
 }

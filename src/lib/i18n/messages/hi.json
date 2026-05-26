@@ -1,0 +1,13 @@
+{
+  "portal.proposalFrom": "की ओर से प्रस्ताव",
+  "portal.preparedFor": "के लिए तैयार",
+  "portal.acceptProposal": "प्रस्ताव स्वीकार करें",
+  "portal.requestChanges": "बदलाव मांगें",
+  "portal.decline": "अस्वीकार करें",
+  "portal.pay": "भुगतान करें",
+  "portal.sign": "अनुबंध पर हस्ताक्षर करें",
+  "portal.whatsIncluded": "क्या शामिल है",
+  "portal.terms": "शर्तें",
+  "portal.total": "कुल",
+  "portal.validity": "{days} दिनों के लिए मान्य"
+}

@@ -12,6 +12,19 @@ import { Modal } from '@/components/ui/Modal';
 import { ProposalDoc, computeTotals } from '@/lib/proposal-schema';
 import { formatCurrency } from '@/lib/utils';
 
+interface ClientPortalProps {
+  token: string;
+  initialDoc: ProposalDoc;
+  status: string;
+  currency: string;
+  locale: string;
+  taxLabel: string;
+  vendor: { name: string; brandColor: string; businessType: string; accentColor: string };
+  template?: { theme: { primary: string; accent: string }; sections: { id: string; kind: string; visible: boolean; title?: string }[] };
+  galleries?: { id: string; title: string; items: { id: string; fileId: string; approved: boolean | null }[] }[];
+  documents?: { id: string; title: string; category: string; status: string; isTemplate: boolean }[];
+}
+
 export function ClientPortal({
   token,
   initialDoc,
@@ -20,15 +33,10 @@ export function ClientPortal({
   locale,
   taxLabel,
   vendor,
-}: {
-  token: string;
-  initialDoc: ProposalDoc;
-  status: string;
-  currency: string;
-  locale: string;
-  taxLabel: string;
-  vendor: { name: string; brandColor: string; businessType: string; accentColor: string };
-}) {
+  template,
+  galleries = [],
+  documents = [],
+}: ClientPortalProps) {
   const [doc, setDoc] = React.useState<ProposalDoc>(initialDoc);
   const [status, setStatus] = React.useState(initialStatus);
   const [editMode, setEditMode] = React.useState(false);
@@ -39,8 +47,76 @@ export function ClientPortal({
   const [submitting, setSubmitting] = React.useState(false);
   const [paying, setPaying] = React.useState(false);
   const [signing, setSigning] = React.useState(false);
+  const [invoice, setInvoice] = React.useState<{
+    id: string; status: string; number: string | null; total: number; amountPaid: number;
+  } | null>(null);
+  const [signature, setSignature] = React.useState<{ id: string; status: string } | null>(null);
+  const [flash, setFlash] = React.useState<'paid' | 'signed' | null>(null);
 
   const totals = React.useMemo(() => computeTotals(doc), [doc]);
+
+  // After Razorpay/Digio redirect back: ?paid=1 or ?signed=1 — poll status until reflected.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const justPaid = sp.get('paid') === '1';
+    const justSigned = sp.get('signed') === '1';
+    if (!justPaid && !justSigned) return;
+    setFlash(justPaid ? 'paid' : 'signed');
+    let cancelled = false;
+    let attempts = 0;
+    async function poll() {
+      if (cancelled || attempts++ > 20) return;
+      try {
+        const res = await fetch(`/api/share/${token}/status`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.proposal?.status) setStatus(data.proposal.status);
+          if (data.invoice) setInvoice(data.invoice);
+          if (data.signature) setSignature(data.signature);
+          const settled =
+            (justPaid && data.invoice?.status === 'PAID') ||
+            (justSigned && data.signature?.status === 'SIGNED');
+          if (settled) {
+            toast.success(justPaid ? 'Payment received' : 'Signature recorded');
+            // Clean the URL so refresh doesn't re-fire
+            const url = new URL(window.location.href);
+            url.searchParams.delete('paid');
+            url.searchParams.delete('signed');
+            window.history.replaceState({}, '', url.toString());
+            return;
+          }
+        }
+      } catch {/* ignore */}
+      setTimeout(poll, 800);
+    }
+    poll();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // Initial status hydration + re-poll on tab focus / visibility change.
+  // This catches up stale tabs the moment the user comes back.
+  React.useEffect(() => {
+    async function refresh() {
+      try {
+        const r = await fetch(`/api/share/${token}/status`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d?.proposal?.status) setStatus(d.proposal.status);
+        if (d?.invoice) setInvoice(d.invoice);
+        if (d?.signature) setSignature(d.signature);
+      } catch { /* ignore */ }
+    }
+    refresh();
+    function onVis() { if (document.visibilityState === 'visible') refresh(); }
+    window.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [token]);
 
   async function pay() {
     setPaying(true);
@@ -48,6 +124,18 @@ export function ClientPortal({
       const res = await fetch(`/api/share/${token}/pay`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
+      if (data.alreadyPaid) {
+        toast.success('This invoice has already been paid.');
+        // Re-fetch status so the UI reflects PAID immediately.
+        const s = await fetch(`/api/share/${token}/status`);
+        if (s.ok) {
+          const sd = await s.json();
+          if (sd.invoice) setInvoice(sd.invoice);
+          if (sd.signature) setSignature(sd.signature);
+        }
+        setPaying(false);
+        return;
+      }
       window.location.href = data.payUrl;
     } catch (e) {
       toast.error((e as Error).message);
@@ -381,6 +469,69 @@ export function ClientPortal({
         </motion.div>
       </section>
 
+      {/* Plugin-injected sections (visa / gallery / documents) */}
+      {template?.sections.filter((s) => s.visible).map((s) => {
+        if (s.kind === 'gallery' && galleries.length > 0) {
+          return (
+            <section key={s.id} className="relative z-10 mx-auto max-w-4xl px-6 mt-12">
+              <h2 className="text-2xl font-semibold mb-4">{s.title ?? 'Gallery'}</h2>
+              {galleries.map((g) => (
+                <div key={g.id} className="card p-6 mb-4">
+                  <h3 className="font-semibold mb-3">{g.title}</h3>
+                  {g.items.length === 0 ? (
+                    <p className="text-sm text-[var(--color-muted)]">No items yet.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {g.items.map((it) => (
+                        <div key={it.id} className="aspect-square rounded-xl border bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-muted)]">
+                          {it.fileId.slice(-6)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </section>
+          );
+        }
+        if (s.kind === 'visa' && documents.some((d) => d.category === 'VISA')) {
+          return (
+            <section key={s.id} className="relative z-10 mx-auto max-w-4xl px-6 mt-12">
+              <div className="card p-6">
+                <h2 className="text-2xl font-semibold">{s.title ?? 'Visa Documents'}</h2>
+                <p className="mt-1 text-sm text-[var(--color-muted)]">Please upload each of the following.</p>
+                <ul className="mt-4 space-y-2 text-sm">
+                  {documents.filter((d) => d.category === 'VISA').map((d) => (
+                    <li key={d.id} className="flex items-center justify-between rounded-xl border bg-[var(--color-surface-2)] p-3">
+                      <span>{d.title}</span>
+                      <span className="chip text-xs">{d.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          );
+        }
+        if (s.kind === 'documents' && documents.length > 0) {
+          return (
+            <section key={s.id} className="relative z-10 mx-auto max-w-4xl px-6 mt-12">
+              <div className="card p-6">
+                <h2 className="text-2xl font-semibold">{s.title ?? 'Documents'}</h2>
+                <ul className="mt-4 space-y-2 text-sm">
+                  {documents.map((d) => (
+                    <li key={d.id} className="flex items-center justify-between rounded-xl border bg-[var(--color-surface-2)] p-3">
+                      <span>{d.title}</span>
+                      <span className="chip text-xs">{d.category}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          );
+        }
+        return null;
+      })}
+
       {/* Inclusions + terms */}
       {(doc.inclusions?.length || doc.terms?.length) && (
         <section className="relative z-10 mx-auto max-w-4xl px-6 mt-12 grid gap-6 md:grid-cols-2">
@@ -432,14 +583,72 @@ export function ClientPortal({
                 <p className="mt-2 text-[var(--color-muted)]">
                   Lock it in by paying the advance and signing the agreement.
                 </p>
+
+                {/* Status pills for paid/signed */}
+                {(invoice || signature) && (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    {invoice && (
+                      <span className={`chip ${
+                        invoice.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300' :
+                        invoice.status === 'PARTIALLY_PAID' ? 'bg-amber-500/20 text-amber-300' :
+                        'bg-slate-500/20 text-slate-300'
+                      }`}>
+                        <CreditCard className="h-3 w-3" />
+                        Invoice {invoice.number ?? '—'} · {invoice.status.replace('_',' ').toLowerCase()}
+                      </span>
+                    )}
+                    {signature && (
+                      <span className={`chip ${
+                        signature.status === 'SIGNED' ? 'bg-emerald-500/20 text-emerald-300' :
+                        'bg-slate-500/20 text-slate-300'
+                      }`}>
+                        <PenSquare className="h-3 w-3" />
+                        Agreement · {signature.status.toLowerCase()}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                  <Button onClick={pay} loading={paying}>
-                    <CreditCard className="h-4 w-4" /> Pay {formatCurrency(totals.total, currency, locale)}
-                  </Button>
-                  <Button variant="secondary" onClick={sign} loading={signing}>
-                    <PenSquare className="h-4 w-4" /> Sign agreement
-                  </Button>
+                  {invoice?.status !== 'PAID' && (
+                    <Button onClick={pay} loading={paying}>
+                      <CreditCard className="h-4 w-4" /> Pay {formatCurrency(
+                        invoice ? Math.max(0, invoice.total - invoice.amountPaid) : totals.total,
+                        currency,
+                        locale
+                      )}
+                    </Button>
+                  )}
+                  {signature?.status !== 'SIGNED' && (
+                    <Button
+                      variant={invoice?.status === 'PAID' ? 'primary' : 'secondary'}
+                      onClick={sign}
+                      loading={signing}
+                    >
+                      <PenSquare className="h-4 w-4" /> Sign agreement
+                    </Button>
+                  )}
+                  {invoice?.status === 'PAID' && signature?.status === 'SIGNED' && (
+                    <div className="text-sm text-emerald-300 inline-flex items-center gap-2">
+                      <Check className="h-4 w-4" /> All set — the team will reach out shortly.
+                    </div>
+                  )}
                 </div>
+
+                <AnimatePresence>
+                  {flash && (
+                    <motion.div
+                      key={flash}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="mt-4 chip border-emerald-500/40 text-emerald-300"
+                    >
+                      <Check className="h-3 w-3" />
+                      {flash === 'paid' ? 'Payment confirmed' : 'Signature confirmed'}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </>
             ) : (
               <>

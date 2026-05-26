@@ -1,0 +1,13 @@
+{
+  "portal.proposalFrom": "Proposal from",
+  "portal.preparedFor": "Prepared for",
+  "portal.acceptProposal": "Accept proposal",
+  "portal.requestChanges": "Request changes",
+  "portal.decline": "Decline",
+  "portal.pay": "Pay",
+  "portal.sign": "Sign agreement",
+  "portal.whatsIncluded": "What's included",
+  "portal.terms": "Terms",
+  "portal.total": "Total",
+  "portal.validity": "Proposal valid for {days} days"
+}

@@ -2,9 +2,11 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Send, Receipt, CheckCircle2, Ban } from 'lucide-react';
+import { Send, CheckCircle2, Ban, Plus, FileMinus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
+import { Input, Select, Textarea } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 interface Invoice {
@@ -50,7 +52,10 @@ export function InvoiceDetail({
 }) {
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
+  const [paymentOpen, setPaymentOpen] = React.useState(false);
+  const [creditOpen, setCreditOpen] = React.useState(false);
   const lineItems = invoice.content.lineItems ?? [];
+  const balance = Math.max(0, invoice.total - invoice.amountPaid);
 
   async function transition(status: string) {
     setBusy(true);
@@ -121,6 +126,16 @@ export function InvoiceDetail({
           {invoice.status === 'SENT' && (
             <Button variant="secondary" onClick={() => transition('PAID')} loading={busy}>
               <CheckCircle2 className="h-4 w-4" /> Mark fully paid
+            </Button>
+          )}
+          {['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE'].includes(invoice.status) && (
+            <Button variant="secondary" onClick={() => setPaymentOpen(true)}>
+              <Plus className="h-4 w-4" /> Record payment
+            </Button>
+          )}
+          {['SENT', 'VIEWED', 'PARTIALLY_PAID', 'PAID'].includes(invoice.status) && (
+            <Button variant="secondary" onClick={() => setCreditOpen(true)}>
+              <FileMinus className="h-4 w-4" /> Issue credit note
             </Button>
           )}
         </div>
@@ -211,6 +226,155 @@ export function InvoiceDetail({
           )}
         </div>
       </div>
+
+      <RecordPaymentModal
+        open={paymentOpen}
+        onClose={() => setPaymentOpen(false)}
+        invoiceId={invoice.id}
+        balance={balance}
+        currency={currency}
+        locale={locale}
+        onDone={() => router.refresh()}
+      />
+      <CreditNoteModal
+        open={creditOpen}
+        onClose={() => setCreditOpen(false)}
+        invoiceId={invoice.id}
+        total={invoice.total}
+        currency={currency}
+        locale={locale}
+        onDone={() => router.refresh()}
+      />
     </motion.div>
+  );
+}
+
+function RecordPaymentModal({
+  open, onClose, invoiceId, balance, currency, locale, onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  invoiceId: string;
+  balance: number;
+  currency: string;
+  locale: string;
+  onDone: () => void;
+}) {
+  const [amount, setAmount] = React.useState(String(balance));
+  const [method, setMethod] = React.useState<'CASH' | 'CHEQUE' | 'BANK_TRANSFER' | 'UPI' | 'CARD'>('BANK_TRANSFER');
+  const [paidAt, setPaidAt] = React.useState(() => new Date().toISOString().slice(0, 16));
+  const [note, setNote] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => { if (open) setAmount(String(balance)); }, [open, balance]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch('/api/payments/manual', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId,
+          amount: Number(amount),
+          method,
+          paidAt: new Date(paidAt).toISOString(),
+          note: note || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      toast.success('Payment recorded');
+      onClose();
+      onDone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Record payment">
+      <p className="text-sm text-[var(--color-muted)] mb-3">
+        Outstanding balance: <strong>{formatCurrency(balance, currency, locale)}</strong>
+      </p>
+      <form onSubmit={submit} className="space-y-3">
+        <Input label="Amount" type="number" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <Select label="Method" value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
+          <option value="BANK_TRANSFER">Bank Transfer</option>
+          <option value="UPI">UPI</option>
+          <option value="CASH">Cash</option>
+          <option value="CHEQUE">Cheque</option>
+          <option value="CARD">Card</option>
+        </Select>
+        <Input label="Paid at" type="datetime-local" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+        <Textarea label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <div className="flex justify-end gap-2 pt-2 border-t">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={saving} disabled={!amount || Number(amount) <= 0}>
+            Record
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreditNoteModal({
+  open, onClose, invoiceId, total, currency, locale, onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  invoiceId: string;
+  total: number;
+  currency: string;
+  locale: string;
+  onDone: () => void;
+}) {
+  const [amount, setAmount] = React.useState(String(total));
+  const [reason, setReason] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => { if (open) setAmount(String(total)); }, [open, total]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/credit-note`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ amount: Number(amount), reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      toast.success('Credit note created');
+      onClose();
+      onDone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Issue credit note">
+      <p className="text-sm text-[var(--color-muted)] mb-3">
+        Generates a new credit-note invoice referencing this one. Original invoice total: <strong>{formatCurrency(total, currency, locale)}</strong>
+      </p>
+      <form onSubmit={submit} className="space-y-3">
+        <Input label="Credit amount" type="number" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <Textarea label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} required />
+        <div className="flex justify-end gap-2 pt-2 border-t">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={saving} variant="danger">
+            Issue credit note
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

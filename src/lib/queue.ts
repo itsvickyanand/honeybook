@@ -24,6 +24,8 @@ export const JOB_NAMES = {
   PAYMENT_RECONCILE: 'payment.reconcile',
   NOTIFICATION_DISPATCH: 'notification.dispatch',
   WEBHOOK_OUTBOUND: 'webhook.outbound',
+  OVERDUE_SWEEP: 'overdue.sweep',
+  DRIP_STEP: 'drip.step',
 } as const;
 
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
@@ -71,6 +73,8 @@ const JOB_TO_QUEUE: Record<JobName, QueueName> = {
   [JOB_NAMES.PAYMENT_RECONCILE]: 'p0',
   [JOB_NAMES.NOTIFICATION_DISPATCH]: 'p1',
   [JOB_NAMES.WEBHOOK_OUTBOUND]: 'p1',
+  [JOB_NAMES.OVERDUE_SWEEP]: 'p2',
+  [JOB_NAMES.DRIP_STEP]: 'p2',
 };
 
 export async function enqueue(

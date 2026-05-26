@@ -32,7 +32,7 @@ export async function createSignRequest(args: SignRequestArgs): Promise<SignRequ
     logger.warn({ signer: args.signerEmail }, 'digio.mock-mode');
     return {
       externalId: `mock-sig-${nanoid(10)}`,
-      signingUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/mock-sign?ref=${nanoid(8)}`,
+      signingUrl: `MOCK_SIGN_URL_PLACEHOLDER`,
       mock: true,
     };
   }

@@ -12,12 +12,32 @@ export default async function ProposalDetail({ params }: { params: Promise<{ id:
   const ctx = await requireContext();
   const proposal = await prisma.proposal.findFirst({
     where: { id, tenantId: ctx.tenant.id },
-    include: { events: { orderBy: { createdAt: 'desc' }, take: 20 } },
+    include: {
+      events: { orderBy: { createdAt: 'desc' }, take: 20 },
+      signatureRequests: { orderBy: { createdAt: 'desc' }, take: 1 },
+      invoices: { orderBy: { createdAt: 'desc' }, take: 1, include: { payments: true } },
+    },
   });
   if (!proposal) notFound();
 
   const doc = proposal.contentJson as unknown as ProposalDoc;
   const aiIssues = (proposal.aiIssues as Array<{ severity: string; code: string; message: string; itemId?: string }> | null) ?? [];
+  const signature = proposal.signatureRequests[0]
+    ? {
+        id: proposal.signatureRequests[0].id,
+        status: proposal.signatureRequests[0].status,
+        signedAt: proposal.signatureRequests[0].signedAt?.toISOString() ?? null,
+      }
+    : null;
+  const invoiceSummary = proposal.invoices[0]
+    ? {
+        id: proposal.invoices[0].id,
+        number: proposal.invoices[0].number,
+        status: proposal.invoices[0].status,
+        total: proposal.invoices[0].total,
+        amountPaid: proposal.invoices[0].amountPaid,
+      }
+    : null;
 
   return (
     <PageTransition>
@@ -38,6 +58,9 @@ export default async function ProposalDetail({ params }: { params: Promise<{ id:
           initialDoc={doc}
           initialStatus={proposal.status}
           aiIssues={aiIssues}
+          signature={signature}
+          invoiceSummary={invoiceSummary}
+          hasClientEmail={!!proposal.clientEmail}
           events={proposal.events.map((e) => ({
             id: e.id,
             type: e.type,

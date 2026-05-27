@@ -16,6 +16,10 @@ import {
   BarChart3,
   MessageSquare,
   Inbox,
+  CalendarDays,
+  Briefcase,
+  Images,
+  FolderOpen,
 } from 'lucide-react';
 import * as React from 'react';
 import { cn } from '@/lib/utils';
@@ -40,6 +44,10 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   BarChart3,
   MessageSquare,
   Inbox,
+  CalendarDays,
+  Briefcase,
+  Images,
+  FolderOpen,
 };
 
 export function Sidebar({

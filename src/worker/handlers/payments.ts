@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { prisma } from '../../lib/db';
 import { logger } from '../../lib/logger';
-import { onInvoicePaid } from '../../lib/lifecycle';
+import { onInvoicePaid, onProposalStatusChanged } from '../../lib/lifecycle';
 
 /**
  * Apply a payment to its invoice + update invoice status. Idempotent by paymentId.
@@ -23,7 +23,6 @@ export async function handlePaymentReconcile(job: Job): Promise<unknown> {
   });
   const rawSum = sumAgg._sum.amount ?? 0;
   // Cap at invoice.total so accidental multi-pay doesn't show >100% paid.
-  // (Prevents the historical "₹78L paid vs ₹26L total" oddity.)
   const paid = Math.min(rawSum, invoice.total);
   const status =
     paid >= invoice.total ? 'PAID' :
@@ -44,6 +43,25 @@ export async function handlePaymentReconcile(job: Job): Promise<unknown> {
       await onInvoicePaid(invoice.id);
     } catch (e) {
       logger.error({ invoiceId: invoice.id, err: (e as Error).message }, 'payment.fanout.failed');
+    }
+  }
+
+  // Deposit-paid auto-accept: any successful payment against a proposal
+  // that hasn't been formally accepted should flip it to ACCEPTED.
+  if (paid > 0 && invoice.proposalId) {
+    const proposal = await prisma.proposal.findUnique({ where: { id: invoice.proposalId } });
+    if (proposal && ['DRAFT', 'SENT', 'VIEWED', 'CHANGES_REQUESTED'].includes(proposal.status)) {
+      const oldStatus = proposal.status;
+      await prisma.proposal.update({
+        where: { id: proposal.id },
+        data: { status: 'ACCEPTED', acceptedAt: new Date() },
+      });
+      await prisma.proposalEvent.create({
+        data: { proposalId: proposal.id, type: 'ACCEPTED', actor: 'client', payload: { source: 'deposit-paid' } as object },
+      });
+      try { await onProposalStatusChanged(proposal.id, 'ACCEPTED', oldStatus); }
+      catch (e) { logger.warn({ err: (e as Error).message }, 'auto-accept.fanout.failed'); }
+      logger.info({ proposalId: proposal.id }, 'proposal.auto-accepted-on-deposit');
     }
   }
 

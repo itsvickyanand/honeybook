@@ -4,6 +4,7 @@ import { ArrowLeft, Mail, Phone, Building2, Sparkles, FileText, Receipt, Message
 import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
+import { SendMessageMenu } from '@/components/ui/SendMessageMenu';
 import { formatCurrency, timeAgo } from '@/lib/utils';
 
 export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -64,6 +65,17 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
                 {formatCurrency(invoices.filter((i) => i.status === 'PAID').reduce((t, i) => t + i.total, 0), ctx.tenant.currency, ctx.tenant.locale)}
               </div>
             </div>
+          </div>
+          <div className="mt-4 pt-4 border-t flex justify-end">
+            <SendMessageMenu
+              ctx={{
+                contactName: contact.fullName,
+                email: contact.email ?? undefined,
+                phone: contact.phone ?? undefined,
+                contactId: contact.id,
+                defaultSubject: `Hi ${contact.fullName.split(' ')[0]}`,
+              }}
+            />
           </div>
         </div>
 

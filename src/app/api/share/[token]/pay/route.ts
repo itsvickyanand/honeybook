@@ -11,8 +11,10 @@ import { computeInvoiceTotals, markInvoiceSent, InvoiceLineItem } from '@/lib/in
 import { currentFinancialYear } from '@/lib/financial-year';
 import type { ProposalDoc } from '@/lib/proposal-schema';
 
-export async function POST(_: Request, { params }: { params: Promise<{ token: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  const url = new URL(req.url);
+  const mode = url.searchParams.get('mode') === 'deposit' ? 'deposit' : 'full';
   const p = await prisma.proposal.findUnique({
     where: { shareToken: token },
     include: { tenant: true },
@@ -83,9 +85,16 @@ export async function POST(_: Request, { params }: { params: Promise<{ token: st
     invoice = await markInvoiceSent(invoice.id);
   }
 
-  // 4. Reuse an existing PENDING Payment for this invoice if one already exists
-  //    (idempotency — guards against multi-click and tab refresh).
-  const due = Math.max(0, invoice.total - invoice.amountPaid);
+  // 4. Compute "due" — full balance, or deposit slice if requested
+  const fullDue = Math.max(0, invoice.total - invoice.amountPaid);
+  const depositPct = p.depositPercent ?? 0;
+  const isDeposit = mode === 'deposit' && depositPct > 0 && invoice.amountPaid === 0;
+  const due = isDeposit
+    ? Math.min(fullDue, Math.round((invoice.total * depositPct) / 100))
+    : fullDue;
+
+  // Reuse an existing PENDING Payment for this invoice if one already exists
+  // (idempotency — guards against multi-click and tab refresh).
   let payment = await prisma.payment.findFirst({
     where: { tenantId: invoice.tenantId, invoiceId: invoice.id, status: 'PENDING' },
     orderBy: { createdAt: 'desc' },

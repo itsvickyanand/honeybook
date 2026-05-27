@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send, Copy, ExternalLink, Save, Plus, Trash2, History, Receipt, AlertTriangle, Info, XCircle, ChevronDown,
+  PenSquare, CreditCard, Check, Clock, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
@@ -31,6 +32,8 @@ interface EventLog {
 }
 
 interface AIIssue { severity: string; code: string; message: string; itemId?: string }
+interface Signature { id: string; status: string; signedAt: string | null }
+interface InvoiceSummary { id: string; number: string | null; status: string; total: number; amountPaid: number }
 
 export function ProposalEditor({
   proposalId,
@@ -42,6 +45,10 @@ export function ProposalEditor({
   initialStatus,
   events,
   aiIssues = [],
+  signature: initialSignature = null,
+  invoiceSummary = null,
+  hasClientEmail = false,
+  initialDepositPercent = 0,
 }: {
   proposalId: string;
   shareToken: string;
@@ -53,6 +60,10 @@ export function ProposalEditor({
   initialStatus: string;
   events: EventLog[];
   aiIssues?: AIIssue[];
+  signature?: Signature | null;
+  invoiceSummary?: InvoiceSummary | null;
+  hasClientEmail?: boolean;
+  initialDepositPercent?: number;
 }) {
   const router = useRouter();
   const [doc, setDoc] = React.useState<ProposalDoc>(initialDoc);
@@ -60,6 +71,55 @@ export function ProposalEditor({
   const [saving, setSaving] = React.useState(false);
   const [converting, setConverting] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
+  const [signature, setSignature] = React.useState<Signature | null>(initialSignature);
+  const [signing, setSigning] = React.useState(false);
+  const [paySending, setPaySending] = React.useState(false);
+  const [depositPercent, setDepositPercent] = React.useState(initialDepositPercent);
+  const [savingDeposit, setSavingDeposit] = React.useState(false);
+
+  async function saveDeposit(v: number) {
+    setSavingDeposit(true);
+    try {
+      const res = await fetch(`/api/proposals/${proposalId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ depositPercent: v }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      toast.success(`Deposit set to ${v}%`);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setSavingDeposit(false); }
+  }
+
+  async function sendForSignature() {
+    setSigning(true);
+    try {
+      const res = await fetch(`/api/proposals/${proposalId}/signature`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      setSignature({ id: data.requestId, status: data.resent ? 'PENDING' : 'SENT', signedAt: null });
+      toast.success(data.resent ? 'Signature link re-sent to client' : 'Signature request sent to client');
+      if (data.signUrl) {
+        try { await navigator.clipboard.writeText(data.signUrl); } catch { /* */ }
+      }
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setSigning(false); }
+  }
+
+  async function sendPayLink() {
+    setPaySending(true);
+    try {
+      const res = await fetch(`/api/proposals/${proposalId}/pay-link`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      toast.success(data.alreadyPaid ? 'Already fully paid' : 'Payment link sent to client');
+      if (data.payUrl) {
+        try { await navigator.clipboard.writeText(data.payUrl); } catch { /* */ }
+      }
+      router.refresh();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setPaySending(false); }
+  }
 
   async function convertToInvoice() {
     setConverting(true);
@@ -351,6 +411,69 @@ export function ProposalEditor({
               Review client changes
             </Link>
           )}
+          <Button
+            variant="secondary"
+            onClick={sendPayLink}
+            loading={paySending}
+            disabled={!hasClientEmail || invoiceSummary?.status === 'PAID'}
+            title={!hasClientEmail ? 'Add a client email first' : invoiceSummary?.status === 'PAID' ? 'Already paid' : 'Email a Razorpay link to the client'}
+          >
+            <CreditCard className="h-4 w-4" /> Send pay link
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={sendForSignature}
+            loading={signing}
+            disabled={!hasClientEmail || signature?.status === 'SIGNED'}
+            title={!hasClientEmail ? 'Add a client email first' : signature?.status === 'SIGNED' ? 'Already signed' : signature ? 'Resend signature request' : 'Send for signature'}
+          >
+            <PenSquare className="h-4 w-4" /> {signature?.status === 'SIGNED' ? 'Signed' : signature ? 'Resend for signature' : 'Send for signature'}
+          </Button>
+        </div>
+
+        {/* Pay + Sign status pills */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">Pay &amp; Sign</span>
+          </div>
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-[var(--color-muted)]" /> Invoice</span>
+              {!invoiceSummary ? (
+                <span className="chip">Not created</span>
+              ) : invoiceSummary.status === 'PAID' ? (
+                <span className="chip bg-emerald-500/20 text-emerald-300"><Check className="h-3 w-3" /> Paid · {invoiceSummary.number}</span>
+              ) : (
+                <span className="chip bg-amber-500/20 text-amber-300"><Clock className="h-3 w-3" /> {invoiceSummary.status.replace('_', ' ').toLowerCase()}</span>
+              )}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><PenSquare className="h-4 w-4 text-[var(--color-muted)]" /> Signature</span>
+              {!signature ? (
+                <span className="chip">Not sent</span>
+              ) : signature.status === 'SIGNED' ? (
+                <span className="chip bg-emerald-500/20 text-emerald-300"><Check className="h-3 w-3" /> Signed</span>
+              ) : (
+                <span className="chip bg-amber-500/20 text-amber-300"><Clock className="h-3 w-3" /> {signature.status.toLowerCase()}</span>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t pt-3 mt-1">
+              <span className="text-xs text-[var(--color-muted)]">Deposit % (asked before accept)</span>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={depositPercent}
+                  onChange={(e) => setDepositPercent(Number(e.target.value) || 0)}
+                  onBlur={() => depositPercent !== initialDepositPercent && saveDeposit(depositPercent)}
+                  className="w-16 h-8 px-2 text-center"
+                />
+                <span className="text-sm text-[var(--color-muted)]">%</span>
+                {savingDeposit && <Loader2 className="h-3 w-3 animate-spin" />}
+              </div>
+            </div>
+          </div>
         </div>
 
         <PricingSummary doc={doc} locale={locale} />

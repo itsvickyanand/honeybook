@@ -14,6 +14,8 @@ import { logger } from './logger';
 import { enqueue, JOB_NAMES } from './queue';
 import { audit } from './audit';
 import { emailPaymentReceived } from './comms/templates';
+import { pushEventToGoogle } from './calendar/google';
+import type { ParsedBrief } from './ai/types';
 
 /**
  * Look up the Lead linked to a Proposal — prefer direct `leadId` link,
@@ -251,6 +253,68 @@ export async function onInvoicePaid(invoiceId: string) {
     entityId: invoice.id,
     diff: { status: 'PAID', amountPaid: invoice.amountPaid } as object,
   });
+
+  // 7. Auto-create a CalendarEvent for the event date + push to Google when connected.
+  if (proposalId) {
+    try { await createBookingFromPaidProposal(invoice.tenantId, proposalId); }
+    catch (e) { logger.warn({ err: (e as Error).message, proposalId }, 'lifecycle.booking.failed'); }
+  }
+}
+
+async function createBookingFromPaidProposal(tenantId: string, proposalId: string) {
+  // Don't create duplicates
+  const existing = await prisma.calendarEvent.findFirst({
+    where: { tenantId, type: 'BOOKING', meta: { path: ['proposalId'], equals: proposalId } as object },
+  });
+  if (existing) return;
+
+  const proposal = await prisma.proposal.findUnique({
+    where: { id: proposalId },
+    include: { contact: true },
+  });
+  if (!proposal) return;
+
+  const parsed = (proposal.parsedBrief ?? {}) as ParsedBrief;
+  let startAt: Date | null = null;
+  if (parsed.eventDates?.length) {
+    const d = new Date(parsed.eventDates[0]);
+    if (!isNaN(d.getTime())) startAt = d;
+  }
+  if (!startAt) {
+    startAt = new Date(Date.now() + 30 * 86400_000);
+    startAt.setHours(10, 0, 0, 0);
+  }
+  const endAt = new Date(startAt.getTime() + 8 * 60 * 60 * 1000);
+
+  const event = await prisma.calendarEvent.create({
+    data: {
+      tenantId,
+      title: `${proposal.contact?.fullName ?? proposal.clientName ?? 'Event'} — ${proposal.title}`,
+      description: proposal.brief.slice(0, 500),
+      startAt,
+      endAt,
+      allDay: true,
+      type: 'BOOKING',
+      location: parsed.city ?? undefined,
+      meta: { proposalId: proposal.id, source: 'invoice-paid' } as object,
+    },
+  });
+
+  try {
+    const externalId = await pushEventToGoogle(tenantId, {
+      title: event.title,
+      description: event.description ?? undefined,
+      startAt: event.startAt,
+      endAt: event.endAt,
+      location: event.location ?? undefined,
+      allDay: event.allDay,
+    });
+    if (externalId) {
+      await prisma.calendarEvent.update({ where: { id: event.id }, data: { externalId } });
+    }
+  } catch (e) {
+    logger.warn({ err: (e as Error).message, eventId: event.id }, 'calendar.google.push-failed');
+  }
 }
 
 /**

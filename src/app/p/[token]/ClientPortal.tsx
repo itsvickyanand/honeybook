@@ -16,6 +16,7 @@ interface ClientPortalProps {
   token: string;
   initialDoc: ProposalDoc;
   status: string;
+  depositPercent?: number;
   currency: string;
   locale: string;
   taxLabel: string;
@@ -29,6 +30,7 @@ export function ClientPortal({
   token,
   initialDoc,
   status: initialStatus,
+  depositPercent = 0,
   currency,
   locale,
   taxLabel,
@@ -118,15 +120,14 @@ export function ClientPortal({
     };
   }, [token]);
 
-  async function pay() {
+  async function pay(mode: 'full' | 'deposit' = 'full') {
     setPaying(true);
     try {
-      const res = await fetch(`/api/share/${token}/pay`, { method: 'POST' });
+      const res = await fetch(`/api/share/${token}/pay?mode=${mode}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
       if (data.alreadyPaid) {
         toast.success('This invoice has already been paid.');
-        // Re-fetch status so the UI reflects PAID immediately.
         const s = await fetch(`/api/share/${token}/status`);
         if (s.ok) {
           const sd = await s.json();
@@ -611,7 +612,7 @@ export function ClientPortal({
 
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                   {invoice?.status !== 'PAID' && (
-                    <Button onClick={pay} loading={paying}>
+                    <Button onClick={() => pay('full')} loading={paying}>
                       <CreditCard className="h-4 w-4" /> Pay {formatCurrency(
                         invoice ? Math.max(0, invoice.total - invoice.amountPaid) : totals.total,
                         currency,
@@ -668,11 +669,23 @@ export function ClientPortal({
           >
             <h3 className="text-xl font-semibold">Ready to move forward?</h3>
             <p className="mt-1 text-[var(--color-muted)]">
-              Accept to lock in this proposal, or send us a message if anything needs tweaking.
+              {depositPercent > 0
+                ? `Lock in your booking by paying ${depositPercent}% deposit. The balance is due closer to your event.`
+                : 'Accept to lock in this proposal, or send us a message if anything needs tweaking.'}
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-              <Button onClick={() => setAcceptOpen(true)}>
-                <ThumbsUp className="h-4 w-4" /> Accept proposal
+              {depositPercent > 0 && (
+                <Button onClick={() => pay('deposit')} loading={paying}>
+                  <CreditCard className="h-4 w-4" />
+                  Pay {formatCurrency(Math.round((totals.total * depositPercent) / 100), currency, locale)} deposit ({depositPercent}%)
+                </Button>
+              )}
+              <Button
+                variant={depositPercent > 0 ? 'secondary' : 'primary'}
+                onClick={() => setAcceptOpen(true)}
+              >
+                <ThumbsUp className="h-4 w-4" />
+                {depositPercent > 0 ? 'Accept without deposit' : 'Accept proposal'}
               </Button>
               <Button variant="secondary" onClick={() => setEditMode(true)}>
                 <MessageSquare className="h-4 w-4" /> Request changes

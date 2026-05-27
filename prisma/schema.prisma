@@ -346,6 +346,7 @@ model Proposal {
   expiresAt      DateTime?
   clientName     String?
   clientEmail    String?
+  depositPercent Float     @default(0) // 0 = no deposit, 50 = 50% advance required
   currentVersion Int       @default(1)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

@@ -56,6 +56,7 @@ export default async function PublicProposalPage({
       token={token}
       initialDoc={doc}
       status={p.status === 'SENT' ? 'VIEWED' : p.status}
+      depositPercent={p.depositPercent ?? 0}
       currency={p.tenant.currency}
       locale={p.tenant.locale}
       taxLabel={p.tenant.taxLabel}

@@ -36,14 +36,22 @@ export async function retrieveCatalog(args: RetrieveArgs): Promise<CatalogRetrie
   const [queryVec] = await embedTexts([queryText]);
 
   // Are there any embedded rows for this tenant? If not, fall back to text search.
-  const hasEmbeddings = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
-    `SELECT count(*)::bigint AS count
-     FROM "CustomRow" r
-     JOIN "CustomTable" t ON t.id = r."tableId"
-     WHERE t."tenantId" = $1 AND r.embedding IS NOT NULL`,
-    args.tenantId
-  );
-  const useVectorPath = Number(hasEmbeddings[0]?.count ?? 0) > 0;
+  // If the column doesn't exist (post-push.sql wasn't run), fall back gracefully
+  // instead of throwing — the platform stays usable in degraded RAG mode.
+  let useVectorPath = false;
+  try {
+    const hasEmbeddings = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
+      `SELECT count(*)::bigint AS count
+       FROM "CustomRow" r
+       JOIN "CustomTable" t ON t.id = r."tableId"
+       WHERE t."tenantId" = $1 AND r.embedding IS NOT NULL`,
+      args.tenantId
+    );
+    useVectorPath = Number(hasEmbeddings[0]?.count ?? 0) > 0;
+  } catch (e) {
+    // Likely missing pgvector column — log a hint and fall back.
+    console.warn('[stage-b] embedding column missing — falling back to text-overlap. Run: npm run db:post-push', (e as Error).message);
+  }
 
   const tables = await prisma.customTable.findMany({
     where: { tenantId: args.tenantId },

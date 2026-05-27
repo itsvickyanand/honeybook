@@ -1,0 +1,57 @@
+services:
+  - type: worker
+    name: honeybook-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    rootDir: .
+    buildCommand: npm ci && npx prisma generate
+    startCommand: npm run start:worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-5
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+      - key: PDF_RUNTIME
+        value: local
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: info

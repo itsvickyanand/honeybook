@@ -18,6 +18,18 @@ interface Cfg {
   brandColor: string;
   logoUrl: string | null;
   region: string;
+  gstin?: string | null;
+  pan?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  websiteUrl?: string | null;
+  invoiceFooter?: string | null;
 }
 
 export function WorkspaceForm({ initial }: { initial: Cfg }) {
@@ -93,6 +105,41 @@ export function WorkspaceForm({ initial }: { initial: Cfg }) {
           </div>
         </div>
       </div>
+      {/* Billing identity — appears on invoices + payment receipts */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="font-semibold">Billing identity</h3>
+          <p className="text-sm text-[var(--color-muted)]">Appears on every invoice you issue.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Input label="GSTIN" value={cfg.gstin ?? ''} onChange={(e) => setCfg({ ...cfg, gstin: e.target.value || null })} hint="15-char GST identification number (India)" />
+          <Input label="PAN" value={cfg.pan ?? ''} onChange={(e) => setCfg({ ...cfg, pan: e.target.value || null })} />
+        </div>
+        <Input label="Address line 1" value={cfg.addressLine1 ?? ''} onChange={(e) => setCfg({ ...cfg, addressLine1: e.target.value || null })} />
+        <Input label="Address line 2" value={cfg.addressLine2 ?? ''} onChange={(e) => setCfg({ ...cfg, addressLine2: e.target.value || null })} />
+        <div className="grid gap-4 md:grid-cols-4">
+          <Input label="City" value={cfg.city ?? ''} onChange={(e) => setCfg({ ...cfg, city: e.target.value || null })} />
+          <Input label="State" value={cfg.state ?? ''} onChange={(e) => setCfg({ ...cfg, state: e.target.value || null })} />
+          <Input label="Postal code" value={cfg.postalCode ?? ''} onChange={(e) => setCfg({ ...cfg, postalCode: e.target.value || null })} />
+          <Input label="Country" value={cfg.country ?? 'IN'} onChange={(e) => setCfg({ ...cfg, country: e.target.value || null })} hint="ISO-2 (e.g. IN, AE)" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Input label="Contact email" type="email" value={cfg.contactEmail ?? ''} onChange={(e) => setCfg({ ...cfg, contactEmail: e.target.value || null })} hint="Shown on invoices + receipts" />
+          <Input label="Contact phone" value={cfg.contactPhone ?? ''} onChange={(e) => setCfg({ ...cfg, contactPhone: e.target.value || null })} />
+          <Input label="Website" type="url" value={cfg.websiteUrl ?? ''} onChange={(e) => setCfg({ ...cfg, websiteUrl: e.target.value || null })} />
+        </div>
+        <div>
+          <label className="label-base">Invoice footer</label>
+          <textarea
+            className="input-base"
+            rows={2}
+            placeholder="Thank you for your business. Bank: HDFC ... · UPI: business@upi"
+            value={cfg.invoiceFooter ?? ''}
+            onChange={(e) => setCfg({ ...cfg, invoiceFooter: e.target.value || null })}
+          />
+        </div>
+      </div>
+
       <div className="flex justify-end">
         <Button onClick={save} loading={saving}>
           <Save className="h-4 w-4" /> Save workspace

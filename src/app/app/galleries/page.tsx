@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
 import { GalleriesActions } from './GalleriesActions';
 import { timeAgo } from '@/lib/utils';
+import { getStorage } from '@/lib/storage';
 
 export default async function GalleriesPage() {
   const ctx = await requireContext();
@@ -17,6 +18,25 @@ export default async function GalleriesPage() {
     },
     orderBy: { createdAt: 'desc' },
   });
+
+  // Resolve storage URLs server-side. publicUrl() returns a signed URL for
+  // private S3/R2 buckets and a public CDN URL for the local driver. This
+  // replaces the previous hardcoded `/uploads/<key>` which broke on S3/R2.
+  const storage = getStorage();
+  const thumbUrlByItem = new Map<string, string>();
+  await Promise.all(
+    galleries.flatMap((g) =>
+      g.items.map(async (it) => {
+        if (!it.file.storageKey) return;
+        try {
+          const url = await storage.publicUrl(it.file.storageKey);
+          thumbUrlByItem.set(it.id, url);
+        } catch {
+          /* leave unset; <img src=""> renders nothing */
+        }
+      })
+    )
+  );
 
   return (
     <PageTransition>
@@ -54,7 +74,7 @@ export default async function GalleriesPage() {
                   {g.items.slice(0, 6).map((it) => (
                     <div key={it.id} className="bg-[var(--color-surface-2)] overflow-hidden">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={it.file.storageKey ? `/uploads/${it.file.storageKey}` : ''} alt="" className="h-full w-full object-cover" />
+                      <img src={thumbUrlByItem.get(it.id) ?? ''} alt="" className="h-full w-full object-cover" />
                     </div>
                   ))}
                   {g.items.length === 0 && (

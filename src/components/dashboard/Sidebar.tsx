@@ -11,6 +11,7 @@ import {
   Sparkles,
   ChevronsLeft,
   ChevronsRight,
+  ChevronDown,
   Receipt,
   Kanban,
   BarChart3,
@@ -20,17 +21,36 @@ import {
   Briefcase,
   Images,
   FolderOpen,
+  Rocket,
+  Wallet,
+  LayoutGrid,
+  Sparkle,
 } from 'lucide-react';
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export interface NavEntry {
-  href: string;
-  label: string;
-  icon: string;
-  permission?: string;
-}
+/**
+ * Sidebar nav entry. Two shapes:
+ *   - Leaf: { href, label, icon, permission? }
+ *   - Group: { label, icon, children: NavEntry[] }
+ * Both may carry `permission` to filter via hasPermission().
+ */
+export type NavEntry =
+  | {
+      href: string;
+      label: string;
+      icon: string;
+      permission?: string;
+      children?: never;
+    }
+  | {
+      label: string;
+      icon: string;
+      children: { href: string; label: string; permission?: string }[];
+      permission?: string;
+      href?: never;
+    };
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Home,
@@ -39,6 +59,7 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Users,
   Settings,
   Sparkles,
+  Sparkle,
   Receipt,
   Kanban,
   BarChart3,
@@ -48,7 +69,16 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Briefcase,
   Images,
   FolderOpen,
+  Rocket,
+  Wallet,
+  LayoutGrid,
 };
+
+function isGroupActive(group: Extract<NavEntry, { children: unknown }>, pathname: string) {
+  return group.children.some((c) =>
+    c.href === '/app' ? pathname === '/app' : pathname.startsWith(c.href)
+  );
+}
 
 export function Sidebar({
   tenant,
@@ -63,6 +93,17 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
+
+  // Track which groups are open. Initially open any group whose child matches the current path.
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const item of nav) {
+      if ('children' in item && item.children && isGroupActive(item, pathname)) {
+        init[item.label] = true;
+      }
+    }
+    return init;
+  });
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -110,10 +151,88 @@ export function Sidebar({
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {nav.map((item) => {
           const Icon = ICONS[item.icon] ?? Home;
+
+          // Group with children
+          if ('children' in item && item.children) {
+            const open = !!openGroups[item.label];
+            const active = isGroupActive(item, pathname);
+            return (
+              <div key={item.label} className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (collapsed) {
+                      setCollapsed(false);
+                      setOpenGroups((g) => ({ ...g, [item.label]: true }));
+                    } else {
+                      setOpenGroups((g) => ({ ...g, [item.label]: !g[item.label] }));
+                    }
+                  }}
+                  className={cn(
+                    'group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all',
+                    active
+                      ? 'bg-[var(--color-surface-2)] text-white'
+                      : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-white'
+                  )}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="sidebar-active"
+                      className="absolute inset-y-1 left-0 w-1 rounded-r-full bg-gradient-to-b from-[var(--color-primary)] to-[var(--color-accent)]"
+                    />
+                  )}
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1 truncate text-left">{item.label}</span>
+                      <ChevronDown
+                        className={cn(
+                          'h-3.5 w-3.5 shrink-0 transition-transform',
+                          open ? 'rotate-180' : ''
+                        )}
+                      />
+                    </>
+                  )}
+                </button>
+                <AnimatePresence initial={false}>
+                  {open && !collapsed && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.18 }}
+                      className="overflow-hidden ml-3 pl-3 border-l space-y-0.5"
+                      style={{ borderColor: 'var(--color-border)' }}
+                    >
+                      {item.children.map((c) => {
+                        const cActive = pathname === c.href || pathname.startsWith(c.href + '/');
+                        return (
+                          <Link
+                            key={c.href}
+                            href={c.href}
+                            className={cn(
+                              'block rounded-lg px-3 py-1.5 text-xs transition-all',
+                              cActive
+                                ? 'bg-[var(--color-surface-2)] text-white'
+                                : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-white'
+                            )}
+                          >
+                            {c.label}
+                          </Link>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          }
+
+          // Leaf
           const active =
             item.href === '/app'
               ? pathname === '/app'
-              : pathname.startsWith(item.href);
+              : pathname === item.href || pathname.startsWith(item.href + '/');
           return (
             <Link
               key={item.href}

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { requireApi } from '@/lib/api';
 import { prisma } from '@/lib/db';
 import { enqueue, JOB_NAMES } from '@/lib/queue';
+import { reconcilePayment } from '@/lib/payments/reconcile';
 
 const schema = z.object({
   invoiceId: z.string(),
@@ -39,6 +40,9 @@ export async function POST(req: Request) {
       note: parsed.data.note,
     },
   });
-  await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id });
+  // Reconcile inline so the invoice updates + project is created immediately,
+  // even without a worker. Enqueue too (idempotent) for the worker path.
+  await reconcilePayment(payment.id).catch(() => {});
+  await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id }).catch(() => {});
   return NextResponse.json({ payment });
 }

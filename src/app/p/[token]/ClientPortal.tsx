@@ -125,7 +125,7 @@ export function ClientPortal({
     try {
       const res = await fetch(`/api/share/${token}/pay?mode=${mode}`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      if (!res.ok) throw new Error(data.message ?? data.error ?? 'Failed');
       if (data.alreadyPaid) {
         toast.success('This invoice has already been paid.');
         const s = await fetch(`/api/share/${token}/status`);

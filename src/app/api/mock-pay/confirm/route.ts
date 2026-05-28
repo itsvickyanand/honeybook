@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { enqueue, JOB_NAMES } from '@/lib/queue';
+import { reconcilePayment } from '@/lib/payments/reconcile';
 import { logger } from '@/lib/logger';
 
 const schema = z.object({ paymentId: z.string() });
@@ -30,7 +31,14 @@ export async function POST(req: Request) {
       paidAt: new Date(),
     },
   });
-  await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id });
+  // Reconcile inline (source of truth) + enqueue for the worker (idempotent).
+  try {
+    const result = await reconcilePayment(payment.id);
+    logger.info({ paymentId: payment.id, ...result }, 'mock-pay.reconciled-inline');
+  } catch (e) {
+    logger.error({ paymentId: payment.id, err: (e as Error).message }, 'mock-pay.reconcile-failed');
+  }
+  await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id }).catch(() => {});
   logger.info({ paymentId: payment.id }, 'mock-pay.confirmed');
   return NextResponse.json({ ok: true });
 }

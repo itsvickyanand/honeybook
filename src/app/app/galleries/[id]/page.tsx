@@ -5,6 +5,7 @@ import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
 import { GalleryEditor } from './GalleryEditor';
+import { getStorage } from '@/lib/storage';
 
 export default async function GalleryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -17,6 +18,21 @@ export default async function GalleryDetailPage({ params }: { params: Promise<{ 
     },
   });
   if (!gallery) notFound();
+
+  // Resolve storage URLs server-side (signed for private S3/R2, public for local).
+  const storage = getStorage();
+  const urlByItem = new Map<string, string>();
+  await Promise.all(
+    gallery.items.map(async (it) => {
+      if (!it.file.storageKey) return;
+      try {
+        const u = await storage.publicUrl(it.file.storageKey);
+        urlByItem.set(it.id, u);
+      } catch {
+        /* swallow — leave URL undefined */
+      }
+    })
+  );
 
   return (
     <PageTransition>
@@ -32,7 +48,7 @@ export default async function GalleryDetailPage({ params }: { params: Promise<{ 
           items={gallery.items.map((it) => ({
             id: it.id,
             fileId: it.fileId,
-            url: `/uploads/${it.file.storageKey}`,
+            url: urlByItem.get(it.id) ?? '',
             filename: it.file.filename,
             approved: it.approved,
             clientNote: it.clientNote,

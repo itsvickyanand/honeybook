@@ -33,3 +33,9 @@ uploads/
 yarn-debug.log*
 yarn-error.log*
 .env*.local
+
+# secrets manifest — never commit
+SECRETS.md
+secrets*.md
+*SECRETS*.md
+*.secrets

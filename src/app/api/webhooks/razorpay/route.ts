@@ -1,14 +1,45 @@
 /**
  * Razorpay webhook receiver.
- * - Verifies signature with timing-safe compare
- * - Dedupes by event id via PaymentWebhook.externalId (unique)
- * - Marks Payment SUCCESS/FAILED and enqueues reconciliation
+ *
+ * Handles BOTH event families Razorpay can send for a payment-link flow:
+ *   - payment_link.paid / payment_link.partially_paid
+ *       → reference is on payload.payment_link.entity.reference_id (= our Payment.id)
+ *       → link id on payload.payment_link.entity.id (= our Payment.providerOrderId)
+ *   - payment.captured / payment.failed
+ *       → payload.payment.entity (notes may or may not carry our ids)
+ *
+ * Matching strategy (most→least specific):
+ *   1. payment_link.entity.reference_id  → Payment.id
+ *   2. payment.entity.notes.reference_id → Payment.id   (legacy)
+ *   3. payment_link.entity.id            → Payment.providerOrderId
+ *
+ * After marking the Payment SUCCESS we reconcile INLINE (synchronous) so the
+ * invoice→PAID transition + Project/Task auto-create happen even with no
+ * worker running. We also enqueue the job as a belt-and-suspenders for the
+ * worker; reconcile is idempotent so double-execution is safe.
  */
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyWebhookSignature } from '@/lib/payments/razorpay';
+import { reconcilePayment } from '@/lib/payments/reconcile';
 import { enqueue, JOB_NAMES } from '@/lib/queue';
 import { logger } from '@/lib/logger';
+
+interface RzpEntity {
+  id?: string;
+  status?: string;
+  amount?: number;
+  amount_paid?: number;
+  reference_id?: string;
+  notes?: Record<string, string>;
+}
+interface RzpBody {
+  event: string;
+  payload?: {
+    payment?: { entity?: RzpEntity };
+    payment_link?: { entity?: RzpEntity };
+  };
+}
 
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -17,56 +48,87 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'bad signature' }, { status: 401 });
   }
 
-  let body: { event: string; payload: { payment?: { entity: { id: string; status: string; notes?: Record<string, string>; amount?: number } } } };
+  let body: RzpBody;
   try {
     body = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: 'bad json' }, { status: 400 });
   }
 
-  const eventId = (body.payload?.payment?.entity?.id ?? `evt-${Date.now()}`);
-  // Dedupe
+  const paymentEnt = body.payload?.payment?.entity;
+  const linkEnt = body.payload?.payment_link?.entity;
+
+  // Dedupe key: prefer the payment id, fall back to link id + event.
+  const dedupeId =
+    paymentEnt?.id ?? `${linkEnt?.id ?? 'unknown'}-${body.event}-${Date.now()}`;
   try {
     await prisma.paymentWebhook.create({
       data: {
         provider: 'razorpay',
         eventType: body.event,
-        externalId: eventId,
+        externalId: dedupeId,
         payload: body as unknown as object,
       },
     });
   } catch {
-    logger.info({ eventId }, 'razorpay.webhook.dedup');
+    logger.info({ dedupeId, event: body.event }, 'razorpay.webhook.dedup');
     return NextResponse.json({ ok: true, dedup: true });
   }
 
-  // Map outcome
-  const ent = body.payload.payment?.entity;
-  if (!ent) return NextResponse.json({ ok: true });
+  // Resolve our internal Payment.
+  const reference =
+    linkEnt?.reference_id ??
+    paymentEnt?.notes?.reference_id ??
+    null;
+  const linkId = linkEnt?.id ?? null;
 
-  // We stored our internal payment id as `reference_id` on the payment link;
-  // Razorpay echoes it back via notes.
-  const internalPaymentId = ent.notes?.reference_id;
-  if (!internalPaymentId) {
-    // Fall back to looking up by providerOrderId (the payment link id).
-    return NextResponse.json({ ok: true, skipped: 'no-ref' });
+  let payment = reference
+    ? await prisma.payment.findUnique({ where: { id: reference } })
+    : null;
+  if (!payment && linkId) {
+    payment = await prisma.payment.findFirst({ where: { providerOrderId: linkId } });
   }
-  const payment = await prisma.payment.findUnique({ where: { id: internalPaymentId } });
-  if (!payment) return NextResponse.json({ ok: true });
+  if (!payment) {
+    logger.warn({ event: body.event, reference, linkId }, 'razorpay.webhook.no-payment-match');
+    return NextResponse.json({ ok: true, skipped: 'no-payment-match' });
+  }
 
-  if (ent.status === 'captured' || body.event === 'payment.captured') {
+  // Decide outcome from event + entity status.
+  const isPaid =
+    body.event === 'payment_link.paid' ||
+    body.event === 'payment.captured' ||
+    paymentEnt?.status === 'captured' ||
+    linkEnt?.status === 'paid';
+  const isPartial =
+    body.event === 'payment_link.partially_paid' ||
+    linkEnt?.status === 'partially_paid';
+  const isFailed =
+    body.event === 'payment.failed' || paymentEnt?.status === 'failed';
+
+  if (isPaid || isPartial) {
+    // Amount actually paid: prefer the payment entity, else link's amount_paid.
+    const paidPaise = paymentEnt?.amount ?? linkEnt?.amount_paid;
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
         status: 'SUCCESS',
-        providerRef: ent.id,
+        providerRef: paymentEnt?.id ?? payment.providerRef,
         paidAt: new Date(),
-        amount: ent.amount ? ent.amount / 100 : payment.amount,
+        amount: paidPaise ? paidPaise / 100 : payment.amount,
       },
     });
-    await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id });
-  } else if (ent.status === 'failed' || body.event === 'payment.failed') {
+
+    // Reconcile inline (source of truth) + enqueue for the worker (idempotent).
+    try {
+      const result = await reconcilePayment(payment.id);
+      logger.info({ paymentId: payment.id, ...result }, 'razorpay.webhook.reconciled-inline');
+    } catch (e) {
+      logger.error({ paymentId: payment.id, err: (e as Error).message }, 'razorpay.webhook.reconcile-failed');
+    }
+    await enqueue(JOB_NAMES.PAYMENT_RECONCILE, { paymentId: payment.id }).catch(() => {});
+  } else if (isFailed) {
     await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } });
   }
+
   return NextResponse.json({ ok: true });
 }

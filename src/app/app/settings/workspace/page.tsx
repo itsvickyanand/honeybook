@@ -20,6 +20,18 @@ export default async function WorkspacePage() {
             brandColor: ctx.tenant.brandColor,
             logoUrl: ctx.tenant.logoUrl,
             region: ctx.tenant.region,
+            gstin: ctx.tenant.gstin,
+            pan: ctx.tenant.pan,
+            addressLine1: ctx.tenant.addressLine1,
+            addressLine2: ctx.tenant.addressLine2,
+            city: ctx.tenant.city,
+            state: ctx.tenant.state,
+            postalCode: ctx.tenant.postalCode,
+            country: ctx.tenant.country,
+            contactEmail: ctx.tenant.contactEmail,
+            contactPhone: ctx.tenant.contactPhone,
+            websiteUrl: ctx.tenant.websiteUrl,
+            invoiceFooter: ctx.tenant.invoiceFooter,
           }}
         />
       </div>

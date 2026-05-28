@@ -44,6 +44,19 @@ export interface RoleDef {
   permissions: string[];
 }
 
+// Task template entries are expanded by lifecycle.onInvoicePaid when a Project
+// is auto-created. `dueOffsetDays` is relative to the event date (negative =
+// before event); falls back to project.startDate when there's no event date.
+export interface TaskTemplate {
+  key: string; // stable identifier, also stored on Task.templateKey
+  title: string;
+  description?: string;
+  category: 'PREP' | 'COMMUNICATION' | 'DELIVERY' | 'ADMIN' | 'FOLLOWUP';
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  dueOffsetDays: number; // 0 = event day, -7 = one week before, +14 = two weeks after
+  reminderHoursBefore?: number;
+}
+
 export interface BusinessTemplate {
   slug: string;
   name: string;
@@ -52,6 +65,8 @@ export interface BusinessTemplate {
   accentColor: string;
   tables: TableDef[];
   roles: RoleDef[];
+  // Tasks auto-created on first invoice payment (booking confirmed)
+  taskTemplates?: TaskTemplate[];
 }
 
 // Permission strings used across the app
@@ -188,6 +203,18 @@ const CATERING: BusinessTemplate = {
       ],
     },
   ],
+  taskTemplates: [
+    { key: 'confirm-headcount-final', title: 'Confirm final headcount with client', category: 'COMMUNICATION', priority: 'HIGH', dueOffsetDays: -7, reminderHoursBefore: 48 },
+    { key: 'finalize-menu', title: 'Finalize menu and any dietary substitutions', category: 'PREP', priority: 'HIGH', dueOffsetDays: -14 },
+    { key: 'staff-roster', title: 'Lock in staff roster (captains, chefs, helpers)', category: 'PREP', priority: 'HIGH', dueOffsetDays: -10 },
+    { key: 'venue-recce', title: 'Site visit to confirm kitchen access + power', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -7 },
+    { key: 'raw-material-procurement', title: 'Place raw-material order with vendors', category: 'PREP', priority: 'HIGH', dueOffsetDays: -3 },
+    { key: 'transport-arrangement', title: 'Arrange transport for equipment + staff', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -2 },
+    { key: 'day-of-setup', title: 'Day-of setup at venue (4 hours before service)', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0, reminderHoursBefore: 6 },
+    { key: 'post-event-wrap', title: 'Pack-up, cleanup, equipment return', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 1 },
+    { key: 'final-invoice-send', title: 'Send final invoice for balance amount', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 2 },
+    { key: 'feedback-request', title: 'Request feedback + Google review', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 7 },
+  ],
 };
 
 // ─── 2. EVENT MANAGEMENT ────────────────────────────────────────────────────
@@ -247,6 +274,19 @@ const EVENT_MGMT: BusinessTemplate = {
       ],
     },
   ],
+  taskTemplates: [
+    { key: 'kickoff-call', title: 'Schedule kickoff call with client', category: 'COMMUNICATION', priority: 'HIGH', dueOffsetDays: -30 },
+    { key: 'venue-shortlist', title: 'Share venue shortlist + recce dates', category: 'PREP', priority: 'HIGH', dueOffsetDays: -25 },
+    { key: 'vendor-onboard', title: 'Onboard sub-vendors (decor, AV, catering, photography)', category: 'PREP', priority: 'HIGH', dueOffsetDays: -21 },
+    { key: 'run-of-show', title: 'Draft run-of-show timeline', category: 'PREP', priority: 'HIGH', dueOffsetDays: -14 },
+    { key: 'walkthrough', title: 'Final walkthrough at venue with all vendors', category: 'PREP', priority: 'HIGH', dueOffsetDays: -3 },
+    { key: 'load-in', title: 'Coordinate vendor load-in', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: -1, reminderHoursBefore: 12 },
+    { key: 'event-day', title: 'Event day — on-site coordination', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0, reminderHoursBefore: 24 },
+    { key: 'load-out', title: 'Vendor load-out + venue handover', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 1 },
+    { key: 'vendor-settlement', title: 'Settle balances with sub-vendors', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 3 },
+    { key: 'final-invoice', title: 'Send final invoice + share event highlight reel', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 5 },
+    { key: 'feedback', title: 'Request testimonial + referral', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 14 },
+  ],
 };
 
 // ─── 3. WEDDING PHOTOGRAPHY ─────────────────────────────────────────────────
@@ -291,6 +331,23 @@ const PHOTOGRAPHY: BusinessTemplate = {
         { name: 'Same-Day Edit Reel', category: 'Same-Day Edit', price: 35000 },
       ],
     },
+  ],
+  taskTemplates: [
+    { key: 'questionnaire', title: 'Send shot-list / preferences questionnaire', category: 'COMMUNICATION', priority: 'HIGH', dueOffsetDays: -30 },
+    { key: 'pre-shoot', title: 'Schedule pre-wedding / engagement shoot (if booked)', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -45 },
+    { key: 'crew-confirm', title: 'Confirm crew availability + assignments', category: 'PREP', priority: 'HIGH', dueOffsetDays: -14 },
+    { key: 'gear-check', title: 'Gear check + memory cards formatted + batteries charged', category: 'PREP', priority: 'HIGH', dueOffsetDays: -2 },
+    { key: 'venue-recce', title: 'Visit venue to scout lighting + angles', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -7 },
+    { key: 'timeline-share', title: 'Share day-of timeline with client + venue', category: 'COMMUNICATION', priority: 'HIGH', dueOffsetDays: -7 },
+    { key: 'event-day', title: 'Shoot day', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0, reminderHoursBefore: 24 },
+    { key: 'backup', title: 'Backup all raw footage to two drives', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0 },
+    { key: 'culling', title: 'Cull selects from raw shoot', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 7 },
+    { key: 'sneak-peek', title: 'Deliver 5-photo sneak-peek to client', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 3 },
+    { key: 'edited-gallery', title: 'Deliver edited gallery (~600 photos)', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 30 },
+    { key: 'highlight-reel', title: 'Deliver highlight reel video', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 45 },
+    { key: 'album-design', title: 'Send album design proof for approval', category: 'COMMUNICATION', priority: 'MEDIUM', dueOffsetDays: 60 },
+    { key: 'final-invoice', title: 'Send final invoice + album press order', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 90 },
+    { key: 'review-ask', title: 'Request Google / WedMeGood review', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 90 },
   ],
 };
 
@@ -350,6 +407,19 @@ const PLANNER: BusinessTemplate = {
         { name: 'Grand Entrance Arch', category: 'Entrance', startingPrice: 85000 },
       ],
     },
+  ],
+  taskTemplates: [
+    { key: 'design-brief', title: 'Lock design brief + mood board with couple', category: 'PREP', priority: 'HIGH', dueOffsetDays: -60 },
+    { key: 'venue-survey', title: 'Survey venue: dimensions, power, anchor points', category: 'PREP', priority: 'HIGH', dueOffsetDays: -45 },
+    { key: 'vendor-bookings', title: 'Book sub-vendors (florist, AV, photography)', category: 'PREP', priority: 'HIGH', dueOffsetDays: -45 },
+    { key: 'invitation-design', title: 'Finalize invitation + signage design', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -30 },
+    { key: 'family-coords', title: 'Coordinate family attire + procession choreography', category: 'COMMUNICATION', priority: 'MEDIUM', dueOffsetDays: -20 },
+    { key: 'rehearsal', title: 'Rehearsal evening at venue', category: 'PREP', priority: 'HIGH', dueOffsetDays: -1 },
+    { key: 'event-day', title: 'On-site management — full day', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0, reminderHoursBefore: 24 },
+    { key: 'event-tear-down', title: 'Venue tear-down + return of rentals', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 1 },
+    { key: 'vendor-payouts', title: 'Final vendor payouts', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 7 },
+    { key: 'highlights-album', title: 'Share highlight album with couple', category: 'DELIVERY', priority: 'LOW', dueOffsetDays: 30 },
+    { key: 'feedback', title: 'Schedule debrief + ask for testimonial', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 14 },
   ],
 };
 
@@ -413,6 +483,17 @@ const FLORIST: BusinessTemplate = {
         { name: 'Gold Charger Plate', category: 'Tableware', ratePerDay: 35, inStock: 800 },
       ],
     },
+  ],
+  taskTemplates: [
+    { key: 'consult', title: 'Consult call: colour palette, scale, allergies', category: 'COMMUNICATION', priority: 'HIGH', dueOffsetDays: -45 },
+    { key: 'flower-sourcing', title: 'Source seasonal flowers (orders with farms)', category: 'PREP', priority: 'HIGH', dueOffsetDays: -10 },
+    { key: 'mock-up', title: 'Build mock-up centerpiece, share with client', category: 'PREP', priority: 'MEDIUM', dueOffsetDays: -21 },
+    { key: 'venue-load-in', title: 'Venue load-in + setup', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0, reminderHoursBefore: 10 },
+    { key: 'event-day', title: 'Event day — touch-ups + monitoring', category: 'DELIVERY', priority: 'HIGH', dueOffsetDays: 0 },
+    { key: 'load-out', title: 'Post-event flower removal + venue handover', category: 'DELIVERY', priority: 'MEDIUM', dueOffsetDays: 1 },
+    { key: 'after-care', title: 'Donate viable flowers to hospitals / shelters', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 2 },
+    { key: 'final-invoice', title: 'Send final invoice for balance', category: 'ADMIN', priority: 'HIGH', dueOffsetDays: 3 },
+    { key: 'review', title: 'Request Instagram tag + Google review', category: 'FOLLOWUP', priority: 'LOW', dueOffsetDays: 10 },
   ],
 };
 

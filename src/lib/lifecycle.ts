@@ -259,6 +259,153 @@ export async function onInvoicePaid(invoiceId: string) {
     try { await createBookingFromPaidProposal(invoice.tenantId, proposalId); }
     catch (e) { logger.warn({ err: (e as Error).message, proposalId }, 'lifecycle.booking.failed'); }
   }
+
+  // 8. Auto-create a Project (the post-booking workspace) and seed Tasks from
+  //    the BusinessType template. Idempotent: if a Project already exists for
+  //    this proposal, this is a no-op.
+  if (proposalId) {
+    try {
+      const project = await ensureProjectForProposal(invoice.tenantId, proposalId);
+      if (project) {
+        await seedTasksFromTemplate(invoice.tenantId, project.id);
+        // Update Invoice + Proposal back-links so the Project becomes the canonical hub
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { projectId: project.id } });
+        await prisma.proposal.update({ where: { id: proposalId }, data: { projectId: project.id } });
+        await dispatchNotification({
+          tenantId: invoice.tenantId,
+          type: 'project.created',
+          title: `Project created: ${project.name}`,
+          body: 'Tasks have been seeded from the template. Review and assign owners.',
+          href: `/app/projects/${project.id}`,
+        });
+      }
+    } catch (e) {
+      logger.warn({ err: (e as Error).message, proposalId }, 'lifecycle.project-autocreate.failed');
+    }
+  }
+}
+
+/**
+ * Idempotently create a Project tied to a Proposal.
+ * If the proposal already has projectId, returns the existing project.
+ * Pulls totalValue from the proposal, dates from parsed brief (eventDates).
+ */
+export async function ensureProjectForProposal(
+  tenantId: string,
+  proposalId: string
+): Promise<{ id: string; name: string; tenantId: string; startDate: Date | null } | null> {
+  const existing = await prisma.proposal.findUnique({
+    where: { id: proposalId },
+    include: {
+      project: { select: { id: true, name: true, tenantId: true, startDate: true } },
+    },
+  });
+  if (!existing) return null;
+  if (existing.project) return existing.project;
+
+  const proposal = await prisma.proposal.findUnique({
+    where: { id: proposalId },
+    include: { contact: true, tenant: { select: { businessType: { select: { slug: true } } } } },
+  });
+  if (!proposal) return null;
+
+  const parsed = (proposal.parsedBrief ?? {}) as ParsedBrief;
+  let startDate: Date | null = null;
+  if (parsed.eventDates?.length) {
+    const d = new Date(parsed.eventDates[0]);
+    if (!isNaN(d.getTime())) startDate = d;
+  }
+  const endDate = startDate ? new Date(startDate.getTime() + 86400_000) : null;
+
+  const lead = await findLeadForProposal(proposalId);
+
+  const name =
+    proposal.contact?.fullName
+      ? `${proposal.contact.fullName} — ${proposal.title}`
+      : proposal.title;
+
+  const project = await prisma.project.create({
+    data: {
+      tenantId,
+      contactId: proposal.contactId ?? undefined,
+      leadId: lead?.id ?? undefined,
+      name,
+      description: proposal.brief.slice(0, 1000),
+      startDate,
+      endDate,
+      totalValue: proposal.total,
+      status: 'CONFIRMED',
+      templateSlug: proposal.tenant.businessType.slug,
+      sourceProposalId: proposal.id,
+    },
+  });
+
+  return { id: project.id, name: project.name, tenantId: project.tenantId, startDate: project.startDate };
+}
+
+interface TaskTemplateEntry {
+  key: string;
+  title: string;
+  description?: string;
+  category?: 'PREP' | 'COMMUNICATION' | 'DELIVERY' | 'ADMIN' | 'FOLLOWUP';
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  dueOffsetDays: number;
+  reminderHoursBefore?: number;
+}
+
+/**
+ * Seed Tasks from the BusinessType template for a freshly created Project.
+ * Idempotent on (projectId, templateKey) — won't duplicate if rerun.
+ */
+export async function seedTasksFromTemplate(tenantId: string, projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: {
+      tenant: { include: { businessType: true } },
+    },
+  });
+  if (!project) return 0;
+
+  const tpl = project.tenant.businessType.templateJson as
+    | { taskTemplates?: TaskTemplateEntry[] }
+    | null;
+  const entries = tpl?.taskTemplates ?? [];
+  if (entries.length === 0) return 0;
+
+  // Anchor for offsets: project.startDate if set, otherwise +30d from now
+  const anchor =
+    project.startDate ?? new Date(Date.now() + 30 * 86400_000);
+
+  const existing = await prisma.task.findMany({
+    where: { projectId, templateKey: { in: entries.map((e) => e.key) } },
+    select: { templateKey: true },
+  });
+  const have = new Set(existing.map((t) => t.templateKey));
+
+  let created = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (have.has(e.key)) continue;
+    const dueDate = new Date(anchor.getTime() + e.dueOffsetDays * 86400_000);
+    await prisma.task.create({
+      data: {
+        tenantId,
+        projectId,
+        title: e.title,
+        description: e.description,
+        category: e.category ?? 'PREP',
+        priority: e.priority ?? 'MEDIUM',
+        status: 'TODO',
+        dueDate,
+        sortOrder: i,
+        templateKey: e.key,
+        dueOffsetDays: e.dueOffsetDays,
+        reminderHoursBefore: e.reminderHoursBefore,
+      },
+    });
+    created++;
+  }
+  return created;
 }
 
 async function createBookingFromPaidProposal(tenantId: string, proposalId: string) {

@@ -17,7 +17,7 @@ async function upsertBusinessTypes() {
         description: t.description,
         icon: t.icon,
         accentColor: t.accentColor,
-        templateJson: { tables: t.tables, roles: t.roles } as object,
+        templateJson: { tables: t.tables, roles: t.roles, taskTemplates: t.taskTemplates ?? [] } as object,
       },
       create: {
         slug: t.slug,
@@ -25,7 +25,7 @@ async function upsertBusinessTypes() {
         description: t.description,
         icon: t.icon,
         accentColor: t.accentColor,
-        templateJson: { tables: t.tables, roles: t.roles } as object,
+        templateJson: { tables: t.tables, roles: t.roles, taskTemplates: t.taskTemplates ?? [] } as object,
       },
     });
     created.push(rec);
@@ -166,6 +166,18 @@ function currentFinancialYear() {
   return `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
 }
 
+async function seedPlatformAdmin() {
+  const email = (process.env.SEED_PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local').toLowerCase();
+  const password = process.env.SEED_PLATFORM_ADMIN_PASSWORD ?? 'admin123!';
+  const existing = await prisma.platformAdmin.findUnique({ where: { email } });
+  if (existing) return { email, password: '(unchanged)' };
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.platformAdmin.create({
+    data: { email, passwordHash, fullName: 'Platform Admin', role: 'ADMIN' },
+  });
+  return { email, password };
+}
+
 async function main() {
   console.log('▶ Seeding business types…');
   const types = await upsertBusinessTypes();
@@ -179,6 +191,9 @@ async function main() {
     demos.push({ businessType: t.name, ...d });
   }
 
+  console.log('▶ Seeding platform admin…');
+  const admin = await seedPlatformAdmin();
+
   console.log('\n┌────────────────────────────────────────────────────────────┐');
   console.log('│  DEMO LOGINS                                              │');
   console.log('├────────────────────────────────────────────────────────────┤');
@@ -187,6 +202,12 @@ async function main() {
   }
   console.log('├────────────────────────────────────────────────────────────┤');
   console.log('│  Password (all):  demo1234                                 │');
+  console.log('└────────────────────────────────────────────────────────────┘\n');
+
+  console.log('┌────────────────────────────────────────────────────────────┐');
+  console.log('│  PLATFORM ADMIN LOGIN  (/admin)                           │');
+  console.log('├────────────────────────────────────────────────────────────┤');
+  console.log(`│  ${admin.email.padEnd(38)} ${admin.password.padEnd(14)} │`);
   console.log('└────────────────────────────────────────────────────────────┘\n');
 }
 

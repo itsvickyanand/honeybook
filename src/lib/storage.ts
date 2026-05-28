@@ -53,6 +53,13 @@ class S3Storage implements Storage {
       region,
       credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
       forcePathStyle,
+      // @aws-sdk v3.729+ injects a CRC32 checksum into presigned PUT URLs by
+      // default. A browser PUT that only sends `content-type` then fails the
+      // signature check against R2. WHEN_REQUIRED keeps checksums off presigned
+      // URLs so direct browser uploads work; R2 also isn't S3-checksum-complete
+      // so we relax response validation too.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 

@@ -119,17 +119,51 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     });
   }
 
-  const link = await createPaymentLink({
-    amountInRupees: payment.amount,
-    description: `Payment for invoice ${invoice.number ?? invoice.id}`,
-    reference: payment.id,
-    customer: {
-      name: p.clientName ?? 'Client',
-      email: p.clientEmail ?? undefined,
-    },
-    callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${token}?paid=1`,
-    notes: { proposalId: p.id, invoiceId: invoice.id },
-  });
+  // Razorpay Payment Links cap the per-link amount (default ₹5,00,000; test
+  // accounts are limited). For larger bookings the client must pay a deposit
+  // or the vendor must split into a payment schedule. Pre-check so we return a
+  // clear, actionable message instead of a raw gateway 400.
+  const linkMaxRupees = Number(process.env.RAZORPAY_PAYMENT_LINK_MAX ?? 500000);
+  const usingRealRazorpay = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  if (usingRealRazorpay && due > linkMaxRupees) {
+    const depositSuggestion = depositPct > 0
+      ? `A ${depositPct}% deposit (₹${Math.round((invoice.total * depositPct) / 100).toLocaleString('en-IN')}) `
+      : 'A smaller deposit ';
+    return NextResponse.json(
+      {
+        error: 'amount_exceeds_gateway_limit',
+        message: `This amount (₹${due.toLocaleString('en-IN')}) is above the payment gateway's per-payment limit of ₹${linkMaxRupees.toLocaleString('en-IN')}. ${depositSuggestion}or a split payment plan would go through. Please ask ${p.tenant.name} to enable a deposit or installment plan.`,
+        limit: linkMaxRupees,
+        due,
+      },
+      { status: 400 }
+    );
+  }
+
+  let link;
+  try {
+    link = await createPaymentLink({
+      amountInRupees: payment.amount,
+      description: `Payment for invoice ${invoice.number ?? invoice.id}`,
+      reference: payment.id,
+      customer: {
+        name: p.clientName ?? 'Client',
+        email: p.clientEmail ?? undefined,
+      },
+      callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${token}?paid=1`,
+      // reference_id is echoed on the payment_link entity; we also stuff it into
+      // notes so the `payment.captured` event path (which only carries the
+      // payment entity) can still resolve our Payment row.
+      notes: { reference_id: payment.id, proposalId: p.id, invoiceId: invoice.id },
+    });
+  } catch (e) {
+    // Surface a clean message from the gateway rather than a 500.
+    const raw = (e as Error).message || 'Payment gateway error';
+    const m = /amount exceeds maximum/i.test(raw)
+      ? `This amount (₹${due.toLocaleString('en-IN')}) exceeds the payment gateway's per-payment limit. Please pay a deposit or ask the vendor to split it into a payment plan.`
+      : 'We could not start the payment right now. Please try again, or contact the vendor.';
+    return NextResponse.json({ error: 'gateway_error', message: m, detail: raw.slice(0, 300) }, { status: 400 });
+  }
 
   await prisma.payment.update({
     where: { id: payment.id },

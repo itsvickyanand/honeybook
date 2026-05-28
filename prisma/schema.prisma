@@ -82,6 +82,25 @@ model Tenant {
   apiKeys             ApiKey[]
   outboundWebhooks    OutboundWebhook[]
   auditLogs           AuditLog[]
+  tasks               Task[]
+  paymentSchedules    PaymentSchedule[]
+  integrations        Integration[]
+
+  // billing / brand additions
+  gstin               String?
+  pan                 String?
+  addressLine1        String?
+  addressLine2        String?
+  city                String?
+  state               String?
+  postalCode          String?
+  country             String?  @default("IN")
+  contactEmail        String?
+  contactPhone        String?
+  websiteUrl          String?
+  invoiceFooter       String?
+  // setup wizard progress (which steps the tenant has completed)
+  setupProgress       Json?
 
   @@index([businessTypeId])
   @@index([region])
@@ -293,6 +312,7 @@ model Lead {
 
   activities Activity[]
   proposals  Proposal[]
+  projects   Project[]
 
   @@index([tenantId])
   @@index([stageId])
@@ -307,7 +327,9 @@ model Activity {
   lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
   contactId String?
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  type      String // NOTE | CALL | EMAIL | MEETING | TASK | STAGE_CHANGE
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type      String // NOTE | CALL | EMAIL | MEETING | TASK | STAGE_CHANGE | FILE
   title     String
   body      String?
   meta      Json?
@@ -318,6 +340,7 @@ model Activity {
   @@index([tenantId])
   @@index([leadId])
   @@index([contactId])
+  @@index([projectId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,6 +376,8 @@ model Proposal {
   updatedAt      DateTime  @updatedAt
   sentAt         DateTime?
   acceptedAt     DateTime?
+  projectId      String?
+  project        Project?  @relation("ProjectProposals", fields: [projectId], references: [id])
 
   versions          ProposalVersion[]
   events            ProposalEvent[]
@@ -364,6 +389,7 @@ model Proposal {
 
   @@index([tenantId])
   @@index([shareToken])
+  @@index([projectId])
 }
 
 model ProposalVersion {
@@ -461,14 +487,20 @@ model Invoice {
   updatedAt       DateTime  @updatedAt
   sentAt          DateTime?
 
+  projectId       String?
+  project         Project?  @relation("ProjectInvoices", fields: [projectId], references: [id])
+  scheduleItemId  String?   @unique // backlink when auto-generated from a PaymentScheduleItem
+
   payments    Payment[]
   creditNotes Invoice[] @relation("CreditNoteOf")
   voidOf      Invoice?  @relation("CreditNoteOf", fields: [voidOfId], references: [id])
   voidOfId    String?
+  scheduleItem PaymentScheduleItem? @relation(fields: [scheduleItemId], references: [id])
 
   @@unique([tenantId, series, financialYear, number])
   @@index([tenantId])
   @@index([proposalId])
+  @@index([projectId])
 }
 
 model Payment {
@@ -833,23 +865,46 @@ model DripEnrollment {
 // PROJECTS — group multiple proposals (multi-event weddings)
 // ─────────────────────────────────────────────────────────────────────────────
 model Project {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contactId   String?
-  contact     Contact? @relation(fields: [contactId], references: [id])
-  name        String
-  description String?
-  startDate   DateTime?
-  endDate     DateTime?
-  totalValue  Float    @default(0)
-  status      String   @default("PLANNING") // PLANNING | CONFIRMED | IN_PROGRESS | DONE | CANCELLED
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId    String?
+  contact      Contact?  @relation(fields: [contactId], references: [id])
+  leadId       String?
+  lead         Lead?     @relation(fields: [leadId], references: [id])
+  name         String
+  description  String?
+  startDate    DateTime?
+  endDate      DateTime?
+  totalValue   Float     @default(0)
+  amountPaid   Float     @default(0) // rolled up from related invoices
+  status       String    @default("PLANNING") // PLANNING | CONFIRMED | IN_PROGRESS | DONE | CANCELLED
+  // Delivery-pipeline stage (the "Projects" kanban board column).
+  // KICKOFF | ONBOARDING | PLANNING | DELIVERY | COMPLETED | ARCHIVED
+  stage        String    @default("KICKOFF")
+  // free-form: which BusinessType template this project was provisioned from
+  templateSlug String?
+  // primary proposal that triggered project creation (for audit / back-link)
+  sourceProposalId String?
+  // workspace presentation + metadata
+  coverImageUrl String?
+  leadSource    String?
+  tags          Json?    // string[]
+  notesText     String?  // the Notes tab
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  members SharedProjectMember[]
+  members          SharedProjectMember[]
+  proposals        Proposal[]            @relation("ProjectProposals")
+  invoices         Invoice[]             @relation("ProjectInvoices")
+  tasks            Task[]
+  paymentSchedules PaymentSchedule[]
+  activities       Activity[]
 
   @@index([tenantId])
+  @@index([tenantId, stage])
+  @@index([contactId])
+  @@index([leadId])
 }
 
 // SharedProjectMember — cross-tenant link (planner ↔ sub-vendor) per BRD Fix 1
@@ -920,3 +975,165 @@ model AuditLog {
   @@index([tenantId, createdAt])
   @@index([entity, entityId])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASKS — work the vendor (or assigned teammate) needs to do for a project.
+//
+// Auto-generated from BusinessType.templateJson.taskTemplates when a Project
+// is auto-created on first invoice payment. Manually editable thereafter.
+// ─────────────────────────────────────────────────────────────────────────────
+model Task {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // optional non-project task (todo on a lead, contact, or standalone)
+  leadId      String?
+  contactId   String?
+  assigneeId  String?
+  title       String
+  description String?
+  category    String?   // PREP | COMMUNICATION | DELIVERY | ADMIN | followup
+  priority    String    @default("MEDIUM") // LOW | MEDIUM | HIGH
+  status      String    @default("TODO") // TODO | DOING | DONE | CANCELLED
+  dueDate     DateTime?
+  completedAt DateTime?
+  sortOrder   Int       @default(0)
+  // when generated from a template, remember which template entry
+  templateKey String?
+  // offset (days) from project start when this task should be due — used by templates
+  dueOffsetDays Int?
+  // remind X hours before due (creates a Notification)
+  reminderHoursBefore Int?
+  reminderSentAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([dueDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYMENT SCHEDULES — installment plans applied to a project / proposal.
+//
+// Example: 25% on booking, 50% one week before, 25% on delivery.
+// Each item, when its dueDate arrives, fires a scheduled job that creates an
+// Invoice and (if a payment provider is configured) issues a payment link
+// and emails the client.
+// ─────────────────────────────────────────────────────────────────────────────
+model PaymentSchedule {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  proposalId  String?
+  totalAmount Float
+  currency    String   @default("INR")
+  status      String   @default("ACTIVE") // ACTIVE | PAUSED | COMPLETED | CANCELLED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items PaymentScheduleItem[]
+
+  @@index([tenantId])
+  @@index([projectId])
+}
+
+model PaymentScheduleItem {
+  id          String   @id @default(cuid())
+  scheduleId  String
+  schedule    PaymentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  label       String   // "Booking deposit" | "Final balance" | "Milestone 1"
+  amount      Float
+  percent     Float?   // if user entered % rather than absolute amount
+  dueDate     DateTime
+  status      String   @default("SCHEDULED") // SCHEDULED | INVOICED | PAID | SKIPPED | OVERDUE
+  sortOrder   Int      @default(0)
+  invoicedAt  DateTime?
+  paidAt      DateTime?
+  // back-link to the invoice that was auto-created from this item
+  invoice     Invoice?
+
+  @@index([scheduleId])
+  @@index([dueDate, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLATFORM ADMIN — the SaaS operator's view. Distinct from tenant Users.
+//
+// Holds platform-wide settings, platform-level Integrations (Calendly for sales,
+// SaaS company's Google Calendar, Sentry, etc.) and the ability to impersonate
+// tenants for support.
+// ─────────────────────────────────────────────────────────────────────────────
+model PlatformAdmin {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  fullName      String
+  role          String    @default("ADMIN") // ADMIN | SUPPORT | READONLY
+  totpSecret    String?
+  totpEnabled   Boolean   @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  auditLogs PlatformAuditLog[]
+
+  @@index([email])
+}
+
+model PlatformAuditLog {
+  id        String   @id @default(cuid())
+  adminId   String?
+  admin     PlatformAdmin? @relation(fields: [adminId], references: [id])
+  action    String
+  entity    String?
+  entityId  String?
+  payload   Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([entity, entityId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTEGRATIONS — single table for platform-level AND tenant-level integrations.
+//
+// scope = 'platform' (tenantId NULL)   — used by PlatformAdmin
+// scope = 'tenant'   (tenantId NOT NULL)
+//
+// Stores OAuth tokens, API keys, and arbitrary config blobs per provider.
+// Worker code reads from here at runtime rather than relying solely on
+// process env vars, so platform-level keys (Sentry, AI provider fallback) can
+// be rotated without redeploying.
+// ─────────────────────────────────────────────────────────────────────────────
+model Integration {
+  id            String   @id @default(cuid())
+  scope         String   // 'platform' | 'tenant'
+  tenantId      String?
+  tenant        Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider      String   // razorpay | resend | msg91 | whatsapp_bsp | google_calendar | calendly | zoom | digio | zoho_books | tally | gst_irp | sentry | anthropic | voyage | openai | gmail | cloudflare_r2 | redis_cloud
+  status        String   @default("DISCONNECTED") // CONNECTED | DISCONNECTED | ERROR | PENDING
+  displayName   String?  // user-set label e.g. "Personal Gmail"
+  accountEmail  String?  // for OAuth: the connected account
+  // Bag of encrypted credentials (we encrypt at the application level via lib/crypto.ts)
+  credentials   Json?
+  // Public, non-secret config (webhook URLs, default sender, region)
+  config        Json?
+  scopes        Json?    // OAuth scopes granted
+  expiresAt     DateTime?
+  lastSyncAt    DateTime?
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([scope, tenantId, provider])
+  @@index([provider, status])
+}
+

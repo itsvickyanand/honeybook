@@ -68,6 +68,37 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<Cr
 export function verifyWebhookSignature(rawBody: string, signature: string): boolean {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!secret) return process.env.NODE_ENV !== 'production'; // accept in dev only
+  if (!signature) return false;
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(signature, 'utf8');
+  // timingSafeEqual throws if lengths differ — guard first so a malformed
+  // signature returns a clean false (→ 401) instead of throwing (→ 500).
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Fetch the current status of a payment link (for the reconcile-sweep cron).
+ * Returns null on any error / mock id so callers can skip gracefully.
+ */
+export async function fetchPaymentLinkStatus(
+  paymentLinkId: string
+): Promise<{ status: string; amountPaid: number } | null> {
+  const id = process.env.RAZORPAY_KEY_ID;
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!id || !secret) return null;
+  if (paymentLinkId.startsWith('plink_mock_')) return null;
+  try {
+    const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+    const res = await fetch(`${HOST}/payment_links/${paymentLinkId}`, {
+      headers: { authorization: `Basic ${auth}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { status: string; amount_paid?: number };
+    // Razorpay statuses: created | partially_paid | paid | cancelled | expired
+    return { status: data.status, amountPaid: (data.amount_paid ?? 0) / 100 };
+  } catch {
+    return null;
+  }
 }

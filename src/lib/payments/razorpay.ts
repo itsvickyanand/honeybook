@@ -65,6 +65,59 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<Cr
   return { providerOrderId: data.id, shortUrl: data.short_url, mock: false };
 }
 
+export interface CreateMandateArgs {
+  maxAmountInRupees: number;
+  customer: { name: string; email?: string; phone?: string };
+  description: string;
+  callbackUrl?: string;
+}
+export interface CreateMandateResult {
+  providerRef: string;
+  authUrl: string;
+  mock: boolean;
+}
+
+/**
+ * Create a UPI AutoPay mandate (recurring authorization) via Razorpay.
+ *
+ * Razorpay's recurring flow is: create a customer → create an order with
+ * `token` registration (UPI AutoPay) → client approves the mandate → future
+ * debits use the saved token. The full multi-step token flow is involved; for
+ * the platform we create a registration order and return its hosted auth link.
+ * Mock mode (no keys) returns a placeholder mandate the UI can still exercise.
+ */
+export async function createAutopayMandate(args: CreateMandateArgs): Promise<CreateMandateResult> {
+  const id = process.env.RAZORPAY_KEY_ID;
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+  if (!id || !secret) {
+    return {
+      providerRef: `mandate_mock_${Date.now()}`,
+      authUrl: `${appUrl}/p/mock-pay?mandate=1`,
+      mock: true,
+    };
+  }
+  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+  // Create a payment link flagged for recurring token registration.
+  const res = await fetch(`${HOST}/payment_links`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      amount: Math.round(args.maxAmountInRupees * 100),
+      currency: 'INR',
+      description: args.description,
+      customer: { name: args.customer.name, email: args.customer.email, contact: args.customer.phone },
+      notify: { sms: !!args.customer.phone, email: !!args.customer.email },
+      callback_url: args.callbackUrl,
+      callback_method: 'get',
+      options: { checkout: { method: { upi: 1 }, recurring: 1 } },
+    }),
+  });
+  if (!res.ok) throw new Error(`Razorpay mandate ${res.status}: ${await res.text()}`);
+  const data = (await res.json()) as { id: string; short_url: string };
+  return { providerRef: data.id, authUrl: data.short_url, mock: false };
+}
+
 export function verifyWebhookSignature(rawBody: string, signature: string): boolean {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!secret) return process.env.NODE_ENV !== 'production'; // accept in dev only

@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireApi } from '@/lib/api';
 import { prisma } from '@/lib/db';
+import { parsePermissions, visibleProjectScope, projectInScope } from '@/lib/session';
 
 const PROJECT_STAGES = ['KICKOFF', 'ONBOARDING', 'PLANNING', 'DELIVERY', 'COMPLETED', 'ARCHIVED'] as const;
 
@@ -16,6 +17,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const auth = await requireApi('contact.view');
   if ('error' in auth) return auth.error;
+  const scope = await visibleProjectScope({
+    userId: auth.user.id,
+    tenantId: auth.tenant.id,
+    permissions: parsePermissions(auth.role.permissions as unknown),
+  });
+  if (!projectInScope(scope, id)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const project = await prisma.project.findFirst({
     where: { id, tenantId: auth.tenant.id },
     include: {
@@ -42,6 +49,8 @@ const patchSchema = z.object({
   leadSource: z.string().max(80).nullable().optional(),
   tags: z.array(z.string().max(40)).max(20).optional(),
   notesText: z.string().max(20000).nullable().optional(),
+  teamId: z.string().nullable().optional(),
+  ownerId: z.string().nullable().optional(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -67,6 +76,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (d.leadSource !== undefined) data.leadSource = d.leadSource;
   if (d.tags !== undefined) data.tags = d.tags as object;
   if (d.notesText !== undefined) data.notesText = d.notesText;
+  if (d.teamId !== undefined) data.teamId = d.teamId;
+  if (d.ownerId !== undefined) data.ownerId = d.ownerId;
 
   // Stage transition → feed entry + auto-bump status when entering terminal stages.
   if (d.stage && d.stage !== existing.stage) {

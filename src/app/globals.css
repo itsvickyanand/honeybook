@@ -17,6 +17,19 @@
   --font-display: var(--font-sans);
 }
 
+/* Light theme — overrides the dark defaults when <html data-theme="light">.
+   Higher specificity than the :root defaults Tailwind emits, so var() usages
+   across the app re-resolve automatically. Primary/accent hues stay the same. */
+:root[data-theme="light"] {
+  --color-bg: #f6f7fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef0f6;
+  --color-border: #e3e6ef;
+  --color-muted: #5b6172;
+  --color-text: #14141d;
+  --color-primary-soft: #7c3aed;
+}
+
 @layer base {
   html, body {
     background: var(--color-bg);

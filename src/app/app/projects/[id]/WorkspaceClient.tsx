@@ -12,17 +12,20 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Mail, StickyNote, Send, X } from 'lucide-react';
 
-const STAGES = [
-  { key: 'KICKOFF', name: 'Kick off' },
-  { key: 'ONBOARDING', name: 'Onboarding' },
-  { key: 'PLANNING', name: 'Planning' },
-  { key: 'DELIVERY', name: 'Delivery' },
-  { key: 'COMPLETED', name: 'Completed' },
-  { key: 'ARCHIVED', name: 'Archived' },
+const FALLBACK_STAGES = [
+  { key: 'new', name: 'New' },
+  { key: 'discovery', name: 'Discovery' },
+  { key: 'proposal', name: 'Proposal' },
+  { key: 'contract_signed', name: 'Contract signed' },
+  { key: 'kickoff', name: 'Kick off' },
+  { key: 'in_progress', name: 'In progress' },
+  { key: 'completed', name: 'Completed' },
+  { key: 'archived', name: 'Archived' },
 ];
 
-export function StageSelect({ projectId, value }: { projectId: string; value: string }) {
+export function StageSelect({ projectId, value, stages }: { projectId: string; value: string; stages?: { key: string; name: string }[] }) {
   const router = useRouter();
+  const STAGES = stages && stages.length > 0 ? stages : FALLBACK_STAGES;
   const [stage, setStage] = React.useState(value);
   const [saving, setSaving] = React.useState(false);
   async function change(next: string) {

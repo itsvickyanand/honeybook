@@ -16,6 +16,7 @@ const lineItem = z.object({
 
 const createSchema = z.object({
   proposalId: z.string().optional(),
+  projectId: z.string().optional(),
   contactId: z.string().optional(),
   type: z.enum(['TAX', 'PROFORMA', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE', 'DELIVERY_CHALLAN']).optional(),
   series: z.string().optional(),
@@ -45,6 +46,19 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
   const tenant = auth.tenant;
+
+  // If tied to a project, validate ownership and inherit its contact when none given.
+  let projectId = parsed.data.projectId;
+  let contactId = parsed.data.contactId;
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, tenantId: tenant.id },
+      select: { id: true, contactId: true },
+    });
+    if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    contactId = contactId ?? project.contactId ?? undefined;
+  }
+
   const lineItems: InvoiceLineItem[] = parsed.data.lineItems.map((li) => ({
     ...li,
     amount: li.quantity * li.unitPrice,
@@ -63,7 +77,8 @@ export async function POST(req: Request) {
     data: {
       tenantId: tenant.id,
       proposalId: parsed.data.proposalId,
-      contactId: parsed.data.contactId,
+      projectId,
+      contactId,
       type: parsed.data.type ?? 'TAX',
       series: parsed.data.series ?? 'INV',
       financialYear: currentFinancialYear(),

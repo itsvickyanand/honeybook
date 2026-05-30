@@ -13,9 +13,9 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GripVertical, Sparkles } from 'lucide-react';
+import { GripVertical, Sparkles, Rocket, LayoutGrid, List, CheckCircle2, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
 
 export interface OppStage {
   id: string;
@@ -42,30 +42,33 @@ export interface ProjCard {
   totalValue: number;
   amountPaid: number;
   contactName: string | null;
+  tasksTotal: number;
+  tasksOpen: number;
+  tasksOverdue: number;
+  serviceDate: string | null;
+  serviceType: string | null;
+  leadSource: string | null;
 }
-
-const PROJECT_STAGES: ProjStageDef[] = [
-  { key: 'KICKOFF', name: 'Kick off', color: '#64748b' },
-  { key: 'ONBOARDING', name: 'Onboarding', color: '#3b82f6' },
-  { key: 'PLANNING', name: 'Planning', color: '#8b5cf6' },
-  { key: 'DELIVERY', name: 'Delivery', color: '#f59e0b' },
-  { key: 'COMPLETED', name: 'Completed', color: '#10b981' },
-  { key: 'ARCHIVED', name: 'Archived', color: '#475569' },
-];
 
 export function ProjectsBoard({
   oppStages,
+  projStages,
   opps,
   projects,
   currency,
   locale,
 }: {
   oppStages: OppStage[];
+  projStages: ProjStageDef[];
   opps: OppCard[];
   projects: ProjCard[];
   currency: string;
   locale: string;
 }) {
+  const PROJECT_STAGES = projStages;
+  const projStageKeys = new Set(projStages.map((s) => s.key));
+  const firstProjKey = projStages[0]?.key ?? 'new';
+  const [layout, setLayout] = React.useState<'board' | 'list'>('board');
   const [view, setView] = React.useState<'opps' | 'projects'>(
     projects.length > 0 && opps.length === 0 ? 'projects' : 'opps'
   );
@@ -98,27 +101,66 @@ export function ProjectsBoard({
       toast.error('Could not move project');
     }
   }
+  const [starting, setStarting] = React.useState<string | null>(null);
+  async function startProject(leadId: string) {
+    setStarting(leadId);
+    try {
+      const res = await fetch('/api/projects/from-opportunity', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ leadId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      // Move it off the Opportunities board and into Projects.
+      const opp = oppItems.find((o) => o.id === leadId);
+      setOppItems((p) => p.filter((o) => o.id !== leadId));
+      if (data.project) {
+        setProjItems((p) => [
+          { id: data.project.id, name: data.project.name, stage: 'new', totalValue: opp?.value ?? 0, amountPaid: 0, contactName: opp?.contactName ?? null, tasksTotal: 0, tasksOpen: 0, tasksOverdue: 0, serviceDate: null, serviceType: null, leadSource: opp?.contactName ? null : null },
+          ...p,
+        ]);
+      }
+      toast.success('Project started — tasks seeded. Switch to Projects to view.');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setStarting(null);
+    }
+  }
 
   return (
     <div>
-      {/* View toggle */}
-      <div className="mb-5 inline-flex rounded-xl border bg-[var(--color-surface)] p-1 text-sm">
-        <button
-          onClick={() => setView('opps')}
-          className={`rounded-lg px-4 py-1.5 transition ${
-            view === 'opps' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'
-          }`}
-        >
-          Opportunities <span className="ml-1 text-xs opacity-70">{oppItems.length}</span>
-        </button>
-        <button
-          onClick={() => setView('projects')}
-          className={`rounded-lg px-4 py-1.5 transition ${
-            view === 'projects' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'
-          }`}
-        >
-          Projects <span className="ml-1 text-xs opacity-70">{projItems.length}</span>
-        </button>
+      {/* View + layout toggles */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-xl border bg-[var(--color-surface)] p-1 text-sm">
+          <button
+            onClick={() => setView('opps')}
+            className={`rounded-lg px-4 py-1.5 transition ${
+              view === 'opps' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'
+            }`}
+          >
+            Opportunities <span className="ml-1 text-xs opacity-70">{oppItems.length}</span>
+          </button>
+          <button
+            onClick={() => setView('projects')}
+            className={`rounded-lg px-4 py-1.5 transition ${
+              view === 'projects' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'
+            }`}
+          >
+            Projects <span className="ml-1 text-xs opacity-70">{projItems.length}</span>
+          </button>
+        </div>
+        {view === 'projects' && (
+          <div className="inline-flex rounded-xl border bg-[var(--color-surface)] p-1 text-sm">
+            <button onClick={() => setLayout('board')} className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 transition ${layout === 'board' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'}`}>
+              <LayoutGrid className="h-3.5 w-3.5" /> Board
+            </button>
+            <button onClick={() => setLayout('list')} className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 transition ${layout === 'list' ? 'bg-[var(--color-surface-2)] font-medium' : 'text-[var(--color-muted)]'}`}>
+              <List className="h-3.5 w-3.5" /> List
+            </button>
+          </div>
+        )}
       </div>
 
       {view === 'opps' ? (
@@ -143,6 +185,15 @@ export function ProjectsBoard({
                     </span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); startProject(o.id); }}
+                  disabled={starting === o.id}
+                  className="mt-2 inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text)] disabled:opacity-50"
+                >
+                  <Rocket className="h-3 w-3" />
+                  {starting === o.id ? 'Starting…' : 'Start project (no payment)'}
+                </button>
               </div>
             );
           }}
@@ -154,37 +205,87 @@ export function ProjectsBoard({
             )
           }
         />
+      ) : layout === 'list' ? (
+        <ProjectList projects={projItems} stages={PROJECT_STAGES} currency={currency} locale={locale} />
       ) : (
         <Board
           columns={PROJECT_STAGES}
-          cards={projItems.map((p) => ({ id: p.id, col: p.stage }))}
+          cards={projItems.map((p) => ({ id: p.id, col: projStageKeys.has(p.stage) ? p.stage : firstProjKey }))}
           onMove={moveProj}
           renderCard={(id) => {
             const p = projItems.find((x) => x.id === id)!;
-            return (
-              <Link href={`/app/projects/${p.id}`} className="block">
-                <div className="font-medium text-sm truncate hover:underline">{p.name}</div>
-                {p.contactName && (
-                  <div className="text-xs text-[var(--color-muted)] truncate">{p.contactName}</div>
-                )}
-                <div className="mt-1.5 flex items-center justify-between text-xs">
-                  <span className="text-[var(--color-muted)]">{formatCurrency(p.totalValue, currency, locale)}</span>
-                  {p.amountPaid > 0 && (
-                    <span className="text-emerald-500">{formatCurrency(p.amountPaid, currency, locale)} paid</span>
-                  )}
-                </div>
-              </Link>
-            );
+            return <ProjectCard p={p} currency={currency} locale={locale} />;
           }}
           columnTotal={(colKey) =>
             formatCurrency(
-              projItems.filter((p) => p.stage === colKey).reduce((t, p) => t + p.totalValue, 0),
+              projItems.filter((p) => (projStageKeys.has(p.stage) ? p.stage : firstProjKey) === colKey).reduce((t, p) => t + p.totalValue, 0),
               currency,
               locale
             )
           }
         />
       )}
+    </div>
+  );
+}
+
+function ProjectCard({ p, currency, locale }: { p: ProjCard; currency: string; locale: string }) {
+  return (
+    <Link href={`/app/projects/${p.id}`} className="block">
+      <div className="font-medium text-sm truncate hover:underline">{p.name}</div>
+      {p.contactName && <div className="text-xs text-[var(--color-muted)] truncate">{p.contactName}</div>}
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+        <CheckCircle2 className="h-3 w-3" />
+        {p.tasksOpen}/{p.tasksTotal} tasks
+        {p.tasksOverdue > 0 && <span className="text-red-400">· {p.tasksOverdue} overdue</span>}
+      </div>
+      {p.serviceDate && (
+        <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--color-muted)]">
+          <CalendarDays className="h-3 w-3" /> {formatDate(p.serviceDate)}
+        </div>
+      )}
+      {p.serviceType && <div className="mt-0.5 text-[11px] text-[var(--color-muted)]">Service: {p.serviceType}</div>}
+      {p.leadSource && <div className="mt-0.5 text-[11px] text-[var(--color-muted)]">Lead source: {p.leadSource}</div>}
+      <div className="mt-1.5 flex items-center justify-between text-xs">
+        <span className="text-[var(--color-muted)]">{formatCurrency(p.totalValue, currency, locale)}</span>
+        {p.amountPaid > 0 && <span className="text-emerald-500">{formatCurrency(p.amountPaid, currency, locale)} paid</span>}
+      </div>
+    </Link>
+  );
+}
+
+function ProjectList({ projects, stages, currency, locale }: { projects: ProjCard[]; stages: ProjStageDef[]; currency: string; locale: string }) {
+  const stageName = (key: string) => stages.find((s) => s.key === key)?.name ?? key;
+  return (
+    <div className="card overflow-hidden p-0">
+      <table className="w-full text-sm">
+        <thead className="bg-[var(--color-surface-2)] text-left text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          <tr>
+            <th className="px-4 py-3">Project</th>
+            <th className="px-4 py-3">Stage</th>
+            <th className="px-4 py-3">Service date</th>
+            <th className="px-4 py-3 text-right">Tasks</th>
+            <th className="px-4 py-3 text-right">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((p) => (
+            <tr key={p.id} className="border-t hover:bg-[var(--color-surface-2)]/50">
+              <td className="px-4 py-3">
+                <Link href={`/app/projects/${p.id}`} className="font-medium hover:underline">{p.name}</Link>
+                {p.contactName && <div className="text-xs text-[var(--color-muted)]">{p.contactName}</div>}
+              </td>
+              <td className="px-4 py-3"><span className="chip text-xs">{stageName(p.stage)}</span></td>
+              <td className="px-4 py-3 text-[var(--color-muted)]">{p.serviceDate ? formatDate(p.serviceDate) : '—'}</td>
+              <td className="px-4 py-3 text-right">{p.tasksOpen}/{p.tasksTotal}{p.tasksOverdue > 0 && <span className="text-red-400"> · {p.tasksOverdue}!</span>}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(p.totalValue, currency, locale)}</td>
+            </tr>
+          ))}
+          {projects.length === 0 && (
+            <tr><td colSpan={5} className="px-4 py-8 text-center text-[var(--color-muted)]">No projects yet.</td></tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

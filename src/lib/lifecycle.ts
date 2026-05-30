@@ -335,12 +335,71 @@ export async function ensureProjectForProposal(
       endDate,
       totalValue: proposal.total,
       status: 'CONFIRMED',
+      stage: 'new',
       templateSlug: proposal.tenant.businessType.slug,
       sourceProposalId: proposal.id,
     },
   });
 
   return { id: project.id, name: project.name, tenantId: project.tenantId, startDate: project.startDate };
+}
+
+/**
+ * Create a Project from a Lead WITHOUT requiring payment — lets a vendor start
+ * delivery as soon as a deal is verbally won. Reuses any proposal already on
+ * the lead (so the project links the proposal + inherits its value); otherwise
+ * builds the project from the lead/contact directly. Idempotent: if a project
+ * already exists for the lead (or its proposal) it's returned, not duplicated.
+ */
+export async function ensureProjectForLead(
+  tenantId: string,
+  leadId: string
+): Promise<{ id: string; name: string; created: boolean } | null> {
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, tenantId },
+    include: {
+      contact: true,
+      proposals: { orderBy: { createdAt: 'desc' }, take: 1 },
+    },
+  });
+  if (!lead) return null;
+
+  // Already-linked project for this lead?
+  const existing = await prisma.project.findFirst({ where: { tenantId, leadId }, select: { id: true, name: true } });
+  if (existing) return { ...existing, created: false };
+
+  // If the lead has a proposal, route through the proposal path (links it).
+  const proposal = lead.proposals[0];
+  if (proposal) {
+    const p = await ensureProjectForProposal(tenantId, proposal.id);
+    if (p) {
+      await seedTasksFromTemplate(tenantId, p.id);
+      await prisma.proposal.update({ where: { id: proposal.id }, data: { projectId: p.id } }).catch(() => {});
+      return { id: p.id, name: p.name, created: true };
+    }
+  }
+
+  // No proposal — build directly from the lead.
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { businessType: { select: { slug: true } } },
+  });
+  const name = lead.contact?.fullName ? `${lead.contact.fullName} — ${lead.title}` : lead.title;
+  const project = await prisma.project.create({
+    data: {
+      tenantId,
+      contactId: lead.contactId ?? undefined,
+      leadId: lead.id,
+      name,
+      description: lead.notes ?? undefined,
+      totalValue: lead.value,
+      status: 'CONFIRMED',
+      stage: 'new',
+      templateSlug: tenant?.businessType.slug ?? undefined,
+    },
+  });
+  await seedTasksFromTemplate(tenantId, project.id);
+  return { id: project.id, name: project.name, created: true };
 }
 
 interface TaskTemplateEntry {

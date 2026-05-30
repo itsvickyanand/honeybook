@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireApi } from '@/lib/api';
 import { prisma } from '@/lib/db';
+import { parsePermissions, visibleProjectScope } from '@/lib/session';
 
 export async function GET(req: Request) {
   const auth = await requireApi('contact.view');
@@ -19,6 +20,17 @@ export async function GET(req: Request) {
   const status = url.searchParams.get('status') ?? undefined;
   const dueBefore = url.searchParams.get('dueBefore');
 
+  // Access scoping: limit to tasks on visible projects + own + standalone.
+  const scope = await visibleProjectScope({
+    userId: auth.user.id,
+    tenantId: auth.tenant.id,
+    permissions: parsePermissions(auth.role.permissions as unknown),
+  });
+  const scopeFilter =
+    scope === 'all'
+      ? {}
+      : { OR: [{ projectId: { in: scope } }, { projectId: null }, { assigneeId: auth.user.id }] };
+
   const tasks = await prisma.task.findMany({
     where: {
       tenantId: auth.tenant.id,
@@ -26,6 +38,7 @@ export async function GET(req: Request) {
       assigneeId: assigneeId ?? undefined,
       status: status ?? undefined,
       dueDate: dueBefore ? { lte: new Date(dueBefore) } : undefined,
+      ...scopeFilter,
     },
     orderBy: [{ status: 'asc' }, { dueDate: 'asc' }, { sortOrder: 'asc' }],
     include: {

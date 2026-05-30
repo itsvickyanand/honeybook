@@ -24,6 +24,13 @@ export function SignupForm({ businessTypes }: { businessTypes: BusinessType[] })
   const [ownerFullName, setOwnerFullName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [gstRegistered, setGstRegistered] = React.useState(false);
+  const [gstin, setGstin] = React.useState('');
+  const [pan, setPan] = React.useState('');
+  const [defaultSacCode, setDefaultSacCode] = React.useState('');
+  const [uiLanguage, setUiLanguage] = React.useState<'en' | 'hi'>('en');
+  const [dpdpConsent, setDpdpConsent] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
 
   const selectedBt = businessTypes.find((b) => b.slug === businessTypeSlug);
@@ -40,6 +47,13 @@ export function SignupForm({ businessTypes }: { businessTypes: BusinessType[] })
           ownerFullName,
           email,
           password,
+          phone: phone || undefined,
+          gstRegistered,
+          gstin: gstRegistered ? gstin : undefined,
+          pan: pan || undefined,
+          defaultSacCode: gstRegistered ? defaultSacCode : undefined,
+          uiLanguage,
+          dpdpConsent,
         }),
       });
       const data = await res.json();
@@ -209,13 +223,72 @@ export function SignupForm({ businessTypes }: { businessTypes: BusinessType[] })
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              <Input
+                label="Mobile number"
+                type="tel"
+                hint="Used for OTP login + WhatsApp/SMS updates."
+                placeholder="+91 9XXXXXXXXX"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+
+              <div>
+                <label className="label-base">Workspace language</label>
+                <select
+                  className="input-base"
+                  value={uiLanguage}
+                  onChange={(e) => setUiLanguage(e.target.value as 'en' | 'hi')}
+                >
+                  <option value="en">English</option>
+                  <option value="hi">हिन्दी (Hindi)</option>
+                </select>
+              </div>
+
+              {/* GST registration branch */}
+              <div className="rounded-xl border border-[var(--color-border)] p-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={gstRegistered}
+                    onChange={(e) => setGstRegistered(e.target.checked)}
+                  />
+                  My business is GST-registered
+                </label>
+                {gstRegistered ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <Input label="GSTIN" value={gstin} onChange={(e) => setGstin(e.target.value)} />
+                    <Input label="PAN" value={pan} onChange={(e) => setPan(e.target.value)} />
+                    <Input label="Default SAC" hint="e.g. 998553" value={defaultSacCode} onChange={(e) => setDefaultSacCode(e.target.value)} />
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <Input label="PAN (optional)" hint="Below GST threshold — PAN only." value={pan} onChange={(e) => setPan(e.target.value)} />
+                  </div>
+                )}
+              </div>
+
+              {/* DPDP consent — required */}
+              <label className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] p-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={dpdpConsent}
+                  onChange={(e) => setDpdpConsent(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-[var(--color-muted)]">
+                  I consent to processing of my and my clients&apos; personal data per the{' '}
+                  <span className="text-[var(--color-text)]">Digital Personal Data Protection Act, 2023</span>,
+                  and confirm data is stored in India.
+                </span>
+              </label>
+
               <div className="flex justify-between">
                 <Button variant="ghost" onClick={() => setStep(1)}>
                   <ArrowLeft className="h-4 w-4" /> Back
                 </Button>
                 <Button
                   loading={loading}
-                  disabled={!email || password.length < 8}
+                  disabled={!email || password.length < 8 || !dpdpConsent}
                   onClick={submit}
                 >
                   Create account <ArrowRight className="h-4 w-4" />

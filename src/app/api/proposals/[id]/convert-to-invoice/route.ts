@@ -49,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const billTo = parsed.data.billToPlaceOfSupply ?? placeOfSupply;
   const totals = computeInvoiceTotals({
     lineItems,
-    taxRate: auth.tenant.taxRate,
+    taxRate: doc.taxRate ?? auth.tenant.taxRate,
     discount: doc.discount ?? 0,
     tenantPlaceOfSupply: placeOfSupply,
     billToPlaceOfSupply: billTo,

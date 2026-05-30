@@ -19,6 +19,7 @@ const patchSchema = z.object({
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional(),
   dueDate: z.string().datetime().nullable().optional(),
   assigneeId: z.string().nullable().optional(),
+  assigneeMemberId: z.string().nullable().optional(), // assign to a project participant
   sortOrder: z.number().int().optional(),
   reminderHoursBefore: z.number().int().min(0).max(720).nullable().optional(),
 });
@@ -43,17 +44,57 @@ export async function PATCH(
   if (parsed.data.dueDate !== undefined) {
     data.dueDate = parsed.data.dueDate ? new Date(parsed.data.dueDate) : null;
   }
+  // Assigning to a participant clears the internal-user assignee and vice versa.
+  if (parsed.data.assigneeMemberId !== undefined && parsed.data.assigneeMemberId) {
+    data.assigneeId = null;
+  }
+  if (parsed.data.assigneeId !== undefined && parsed.data.assigneeId) {
+    data.assigneeMemberId = null;
+  }
   if (parsed.data.status === 'DONE' && existing.status !== 'DONE') {
     data.completedAt = new Date();
   }
   if (parsed.data.status && parsed.data.status !== 'DONE') {
     data.completedAt = null;
   }
+  // Track who assigned + when, and log an activity on (re)assignment.
+  const assigneeChanged =
+    parsed.data.assigneeId !== undefined && parsed.data.assigneeId !== existing.assigneeId;
+  if (assigneeChanged) {
+    data.assignedById = auth.user.id;
+    data.assignedAt = parsed.data.assigneeId ? new Date() : null;
+  }
 
-  const task = await prisma.task.update({
-    where: { id },
-    data,
-  });
+  const task = await prisma.task.update({ where: { id }, data });
+
+  if (assigneeChanged) {
+    const assignee = parsed.data.assigneeId
+      ? await prisma.user.findUnique({ where: { id: parsed.data.assigneeId }, select: { fullName: true } })
+      : null;
+    await prisma.activity.create({
+      data: {
+        tenantId: auth.tenant.id,
+        userId: auth.user.id,
+        projectId: existing.projectId ?? undefined,
+        type: 'TASK',
+        title: assignee ? `Task assigned to ${assignee.fullName}` : 'Task unassigned',
+        body: existing.title,
+        meta: { taskId: id, assigneeId: parsed.data.assigneeId ?? null } as object,
+      },
+    }).catch(() => {});
+    // Notify the new assignee.
+    if (parsed.data.assigneeId) {
+      await prisma.notification.create({
+        data: {
+          tenantId: auth.tenant.id,
+          userId: parsed.data.assigneeId,
+          type: 'task.assigned',
+          title: `You were assigned: ${existing.title}`,
+          href: existing.projectId ? `/app/projects/${existing.projectId}?tab=tasks` : '/app/my-work',
+        },
+      }).catch(() => {});
+    }
+  }
   return NextResponse.json({ task });
 }
 

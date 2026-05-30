@@ -144,10 +144,14 @@ export function ClientPortal({
     }
   }
 
-  async function sign() {
+  async function sign(provider: 'digio' | 'docusign' = 'digio') {
     setSigning(true);
     try {
-      const res = await fetch(`/api/share/${token}/sign`, { method: 'POST' });
+      const res = await fetch(`/api/share/${token}/sign`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
       window.location.href = data.signUrl;
@@ -611,23 +615,33 @@ export function ClientPortal({
                 )}
 
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                  {invoice?.status !== 'PAID' && (
-                    <Button onClick={() => pay('full')} loading={paying}>
-                      <CreditCard className="h-4 w-4" /> Pay {formatCurrency(
-                        invoice ? Math.max(0, invoice.total - invoice.amountPaid) : totals.total,
-                        currency,
-                        locale
-                      )}
-                    </Button>
-                  )}
+                  {(() => {
+                    const due = invoice ? Math.max(0, invoice.total - invoice.amountPaid) : totals.total;
+                    if (invoice?.status === 'PAID' || due <= 0) return null;
+                    return (
+                      <Button onClick={() => pay('full')} loading={paying}>
+                        <CreditCard className="h-4 w-4" /> Pay {formatCurrency(due, currency, locale)}
+                      </Button>
+                    );
+                  })()}
                   {signature?.status !== 'SIGNED' && (
-                    <Button
-                      variant={invoice?.status === 'PAID' ? 'primary' : 'secondary'}
-                      onClick={sign}
-                      loading={signing}
-                    >
-                      <PenSquare className="h-4 w-4" /> Sign agreement
-                    </Button>
+                    <>
+                      <Button
+                        variant={invoice?.status === 'PAID' ? 'primary' : 'secondary'}
+                        onClick={() => sign('digio')}
+                        loading={signing}
+                      >
+                        <PenSquare className="h-4 w-4" /> Sign with Aadhaar
+                      </Button>
+                      <Button variant="secondary" onClick={() => sign('docusign')} loading={signing}>
+                        <PenSquare className="h-4 w-4" /> Sign with DocuSign
+                      </Button>
+                    </>
+                  )}
+                  {signature?.status === 'SIGNED' && (
+                    <a href={`/api/share/${token}/contract`} target="_blank" rel="noreferrer" className="btn-secondary text-sm">
+                      <Check className="h-4 w-4" /> Download signed agreement
+                    </a>
                   )}
                   {invoice?.status === 'PAID' && signature?.status === 'SIGNED' && (
                     <div className="text-sm text-emerald-300 inline-flex items-center gap-2">

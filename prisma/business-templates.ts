@@ -82,40 +82,92 @@ export const PERMS = {
   CONTACT_EDIT: 'contact.edit',
   TEAM_MANAGE: 'team.manage',
   SETTINGS_MANAGE: 'settings.manage',
+  // ── People & teams ──
+  MEMBER_INVITE: 'member.invite',
+  MEMBER_MANAGE: 'member.manage',
+  ROLE_MANAGE: 'role.manage',
+  TEAM_VIEW: 'team.view',
+  // ── Projects ──
+  PROJECT_VIEW_ALL: 'project.view.all',          // see every project in the business
+  PROJECT_VIEW_ASSIGNED: 'project.view.assigned', // see only projects I'm on
+  PROJECT_MANAGE: 'project.manage',
+  PROJECT_ASSIGN: 'project.assign',               // set team / owner / participants
+  // ── Tasks ──
+  TASK_VIEW: 'task.view',
+  TASK_ASSIGN: 'task.assign',
+  TASK_EDIT: 'task.edit',
+  TASK_COMPLETE: 'task.complete',
+  // ── Money ──
+  BILLING_VIEW: 'billing.view',
+  BILLING_MANAGE: 'billing.manage',
+  INTEGRATIONS_MANAGE: 'integrations.manage',
 } as const;
 
-// Standard role presets — applied to every tenant
+// Standard role presets — applied to every tenant.
+// Hierarchy: Owner > Admin > Manager > Sales > Coordinator > Viewer.
 const STANDARD_ROLES: RoleDef[] = [
   {
     name: 'Owner',
-    description: 'Full access to everything.',
+    description: 'Full access, including billing and ownership.',
     permissions: [PERMS.ALL],
+  },
+  {
+    name: 'Admin',
+    description: 'Manage everything except ownership/billing transfer.',
+    permissions: [
+      PERMS.CATALOG_VIEW, PERMS.CATALOG_EDIT, PERMS.SCHEMA_EDIT,
+      PERMS.PROPOSAL_VIEW, PERMS.PROPOSAL_CREATE, PERMS.PROPOSAL_SEND,
+      PERMS.CONTACT_VIEW, PERMS.CONTACT_EDIT,
+      PERMS.MEMBER_INVITE, PERMS.MEMBER_MANAGE, PERMS.ROLE_MANAGE,
+      PERMS.TEAM_VIEW, PERMS.TEAM_MANAGE,
+      PERMS.PROJECT_VIEW_ALL, PERMS.PROJECT_MANAGE, PERMS.PROJECT_ASSIGN,
+      PERMS.TASK_VIEW, PERMS.TASK_ASSIGN, PERMS.TASK_EDIT, PERMS.TASK_COMPLETE,
+      PERMS.BILLING_VIEW, PERMS.SETTINGS_MANAGE, PERMS.INTEGRATIONS_MANAGE,
+    ],
+  },
+  {
+    name: 'Manager',
+    description: 'Lead a team: manage their projects, tasks, and members.',
+    permissions: [
+      PERMS.CATALOG_VIEW,
+      PERMS.PROPOSAL_VIEW, PERMS.PROPOSAL_CREATE, PERMS.PROPOSAL_SEND,
+      PERMS.CONTACT_VIEW, PERMS.CONTACT_EDIT,
+      PERMS.TEAM_VIEW, PERMS.MEMBER_INVITE,
+      PERMS.PROJECT_VIEW_ALL, PERMS.PROJECT_MANAGE, PERMS.PROJECT_ASSIGN,
+      PERMS.TASK_VIEW, PERMS.TASK_ASSIGN, PERMS.TASK_EDIT, PERMS.TASK_COMPLETE,
+    ],
   },
   {
     name: 'Sales',
     description: 'Create and send proposals, manage clients.',
     permissions: [
       PERMS.CATALOG_VIEW,
-      PERMS.PROPOSAL_VIEW,
-      PERMS.PROPOSAL_CREATE,
-      PERMS.PROPOSAL_SEND,
-      PERMS.CONTACT_VIEW,
-      PERMS.CONTACT_EDIT,
+      PERMS.PROPOSAL_VIEW, PERMS.PROPOSAL_CREATE, PERMS.PROPOSAL_SEND,
+      PERMS.CONTACT_VIEW, PERMS.CONTACT_EDIT,
+      PERMS.TEAM_VIEW,
+      PERMS.PROJECT_VIEW_ASSIGNED,
+      PERMS.TASK_VIEW, PERMS.TASK_EDIT, PERMS.TASK_COMPLETE,
     ],
   },
   {
     name: 'Coordinator',
-    description: 'View proposals and clients, no editing of pricing.',
+    description: 'Deliver assigned projects; work tasks; no pricing edits.',
     permissions: [
       PERMS.CATALOG_VIEW,
       PERMS.PROPOSAL_VIEW,
       PERMS.CONTACT_VIEW,
+      PERMS.TEAM_VIEW,
+      PERMS.PROJECT_VIEW_ASSIGNED,
+      PERMS.TASK_VIEW, PERMS.TASK_EDIT, PERMS.TASK_COMPLETE,
     ],
   },
   {
     name: 'Viewer',
-    description: 'Read-only access.',
-    permissions: [PERMS.CATALOG_VIEW, PERMS.PROPOSAL_VIEW, PERMS.CONTACT_VIEW],
+    description: 'Read-only access to assigned projects.',
+    permissions: [
+      PERMS.CATALOG_VIEW, PERMS.PROPOSAL_VIEW, PERMS.CONTACT_VIEW,
+      PERMS.TEAM_VIEW, PERMS.PROJECT_VIEW_ASSIGNED, PERMS.TASK_VIEW,
+    ],
   },
 ];
 
@@ -497,10 +549,54 @@ const FLORIST: BusinessTemplate = {
   ],
 };
 
-export const BUSINESS_TEMPLATES: BusinessTemplate[] = [
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD-ONS & BOOKINGS — a low-cost catalog injected into EVERY business type.
+//
+// Why: the premium catalog items (per-plate menus, albums, mandaps) make
+// proposals total in lakhs, which exceeds payment-gateway per-transaction caps
+// in test/unactivated mode. These cheap items (₹250–2,500) let a vendor build a
+// small, fully-payable proposal — ideal for demos and for collecting
+// consultation/booking fees up front.
+// ─────────────────────────────────────────────────────────────────────────────
+function addonsTable(slug: string): TableDef {
+  const taste: Record<string, string> = {
+    catering: 'Menu Tasting Session',
+    'event-management': 'Planning Consultation',
+    'wedding-photography': 'Pre-wedding Mini Shoot',
+    'wedding-planner': 'Design Consultation',
+    'florist-decor': 'Sample Centerpiece',
+  };
+  return {
+    slug: 'bookings',
+    name: 'Add-ons & Bookings',
+    icon: 'Sparkles',
+    description: 'Low-cost services, consultations and booking fees — quick, fully-payable line items.',
+    columns: [
+      { slug: 'name', name: 'Item', type: 'TEXT', required: true },
+      { slug: 'category', name: 'Category', type: 'SELECT', options: ['Consultation', 'Tasting', 'Booking Fee', 'Add-on', 'Rush'] },
+      { slug: 'price', name: 'Price', type: 'CURRENCY', required: true },
+      { slug: 'description', name: 'Description', type: 'LONG_TEXT' },
+    ],
+    sampleRows: [
+      { name: 'Initial Consultation', category: 'Consultation', price: 999, description: '45-min planning call to scope your event and budget.' },
+      { name: taste[slug] ?? 'Sample / Tasting', category: 'Tasting', price: 1500, description: 'Hands-on preview so you can finalise choices with confidence.' },
+      { name: 'Date-block / Booking Fee', category: 'Booking Fee', price: 2500, description: 'Reserves your date on our calendar; adjusted against the final invoice.' },
+      { name: 'Express Turnaround', category: 'Rush', price: 1200, description: 'Priority handling for tight timelines.' },
+      { name: 'Extra Hour On-site', category: 'Add-on', price: 750, description: 'Additional coverage / coordination beyond the package.' },
+    ],
+  };
+}
+
+const BUSINESS_TEMPLATES_RAW: BusinessTemplate[] = [
   CATERING,
   EVENT_MGMT,
   PHOTOGRAPHY,
   PLANNER,
   FLORIST,
 ];
+
+// Inject the cheap Add-ons table into every business type's catalog.
+export const BUSINESS_TEMPLATES: BusinessTemplate[] = BUSINESS_TEMPLATES_RAW.map((t) => ({
+  ...t,
+  tables: [...t.tables, addonsTable(t.slug)],
+}));

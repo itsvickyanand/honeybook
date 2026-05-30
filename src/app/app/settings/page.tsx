@@ -10,8 +10,10 @@ export default async function SettingsPage() {
   const ctx = await requireContext();
   const cards: { href: string; title: string; description: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { href: '/app/settings/workspace', title: 'Workspace', description: 'Name, tax, currency, brand color, logo, region', icon: Building2 },
-    { href: '/app/settings/team', title: 'Team', description: 'Invite, edit roles, suspend', icon: Users },
+    { href: '/app/settings/team', title: 'Members', description: 'Invite people, set roles, suspend', icon: Users },
+    { href: '/app/settings/teams', title: 'Teams', description: 'Group members into teams, set leads, move people', icon: Users },
     { href: '/app/settings/roles', title: 'Roles & permissions', description: 'Custom roles with per-permission toggles', icon: Shield },
+    { href: '/app/settings/contracts', title: 'Contracts', description: 'Write your own agreements with merge fields, set a default', icon: ScrollText },
     { href: '/app/settings/security', title: 'Security', description: 'Two-factor authentication, sessions', icon: Shield },
     { href: '/app/settings/integrations', title: 'Integrations', description: 'Zoho, Google Calendar, Tally, payments, eSign', icon: Plug },
     { href: '/app/settings/whatsapp', title: 'WhatsApp templates', description: 'Manage approved Meta templates', icon: MessageSquare },

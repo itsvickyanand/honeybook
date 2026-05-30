@@ -4,6 +4,7 @@
  * Used by the AI generator (output schema) and the client portal (renderer).
  */
 import { z } from 'zod';
+import { computeMoney, round2 } from './money';
 
 export const lineItemSchema = z.object({
   id: z.string(), // client-side stable id
@@ -60,22 +61,20 @@ export type ProposalDoc = z.infer<typeof proposalDocSchema>;
 export type LineItem = z.infer<typeof lineItemSchema>;
 export type ProposalSection = z.infer<typeof sectionSchema>;
 
+/**
+ * Proposal totals — delegates to the single money engine so the proposal body,
+ * the invoice, and the pay link always agree to the paisa. Mutates each line
+ * item's `amount` (qty × unitPrice) as a side effect, matching prior behaviour.
+ */
 export function computeTotals(doc: ProposalDoc) {
-  let subtotal = 0;
-  for (const s of doc.sections) {
-    for (const li of s.items) {
-      const amount = (li.quantity || 0) * (li.unitPrice || 0);
-      li.amount = round2(amount);
-      subtotal += amount;
-    }
-  }
-  const discount = doc.discount || 0;
-  const taxableBase = Math.max(0, subtotal - discount);
-  const taxAmount = round2((taxableBase * (doc.taxRate || 0)) / 100);
-  const total = round2(taxableBase + taxAmount);
-  return { subtotal: round2(subtotal), discount: round2(discount), taxAmount, total };
+  const lineItems = doc.sections.flatMap((s) => s.items);
+  const m = computeMoney({
+    lineItems,
+    taxRate: doc.taxRate || 0,
+    discount: doc.discount || 0,
+    intraState: true,
+  });
+  return { subtotal: m.subtotal, discount: m.discount, taxAmount: m.taxAmount, total: m.total };
 }
 
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
-}
+export { round2 };

@@ -75,7 +75,11 @@ Rules:
   • Tone: ${args.tone}.
   • Upsell: ${upsellGuide}
   • Group items into 3–6 sections by event stage or category.
-  • Set realistic quantities using the parsed brief (guests, days, etc.).
+  • Set realistic quantities using the parsed brief (guests, days, etc.). Use the
+    EXACT counts the brief implies — never inflate. Per-plate items use the guest
+    count; per-day items use the number of days; one-off services use quantity 1.
+  • Prefer the most relevant 4–8 items overall; a tight, well-priced proposal
+    converts better than an exhaustive one.
   • If a catalog row has a price column (price, pricePerPlate, rate*, fee), use that as unitPrice. Do NOT change prices.
   • Currency: ${args.currency}; do not include currency symbols in numeric fields.
   • Output ONLY a JSON object matching:

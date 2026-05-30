@@ -7,6 +7,30 @@ import { BUSINESS_TEMPLATES, BusinessTemplate } from './business-templates';
 
 const prisma = new PrismaClient();
 
+/**
+ * Backfill the standard role set onto EVERY existing tenant so older tenants
+ * pick up the new Admin/Manager roles + expanded permissions. Idempotent via
+ * the unique (tenantId, name) constraint.
+ */
+async function backfillStandardRoles() {
+  const tenants = await prisma.tenant.findMany({ select: { id: true } });
+  // All standard roles are identical across business types — read from the
+  // first template's role list.
+  const roles = BUSINESS_TEMPLATES[0].roles;
+  let updated = 0;
+  for (const t of tenants) {
+    for (const r of roles) {
+      await prisma.role.upsert({
+        where: { tenantId_name: { tenantId: t.id, name: r.name } },
+        update: { description: r.description, permissions: r.permissions as object, isSystem: true },
+        create: { tenantId: t.id, name: r.name, description: r.description, permissions: r.permissions as object, isSystem: true },
+      });
+      updated++;
+    }
+  }
+  return { tenants: tenants.length, rolesUpserted: updated };
+}
+
 async function upsertBusinessTypes() {
   const created = [];
   for (const t of BUSINESS_TEMPLATES) {
@@ -40,7 +64,17 @@ async function seedDemoTenant(template: BusinessTemplate, businessTypeId: string
   const password = 'demo1234';
   const passwordHash = await bcrypt.hash(password, 10);
 
-  await prisma.tenant.deleteMany({ where: { slug: tenantSlug } });
+  // FK-safe reset: GalleryItem.fileId → FileObject has no cascade, so a plain
+  // tenant delete fails if any gallery items exist (e.g. uploaded test images).
+  // Clear gallery items first, then the tenant cascade handles the rest.
+  const prior = await prisma.tenant.findUnique({ where: { slug: tenantSlug }, select: { id: true } });
+  if (prior) {
+    // Clear rows whose FKs don't cascade from Tenant (gallery items → files;
+    // user invites → invitedBy user), then the tenant cascade handles the rest.
+    await prisma.galleryItem.deleteMany({ where: { gallery: { tenantId: prior.id } } });
+    await prisma.userInvite.deleteMany({ where: { tenantId: prior.id } });
+    await prisma.tenant.delete({ where: { id: prior.id } });
+  }
 
   const tenant = await prisma.tenant.create({
     data: {
@@ -89,7 +123,7 @@ async function seedDemoTenant(template: BusinessTemplate, businessTypeId: string
   }
   const ownerRoleId = roleMap.get('Owner')!;
 
-  await prisma.user.create({
+  const owner = await prisma.user.create({
     data: {
       tenantId: tenant.id,
       roleId: ownerRoleId,
@@ -156,7 +190,88 @@ async function seedDemoTenant(template: BusinessTemplate, businessTypeId: string
     data: { tenantId: tenant.id, pipelineId: pipeline.id, stageId: stagesArr[0].id, contactId: c2.id, title: 'Reena Khanna Corporate', source: 'referral', value: 320000, score: 45 },
   });
 
-  return { tenant, ownerEmail, password };
+  // ── Ready-to-pay demo proposal + invoice (cheap, full-payable via Razorpay) ──
+  // Kept under the gateway per-transaction cap so the whole amount clears in one
+  // payment, exercising the pay → invoice PAID → project + tasks flow end-to-end.
+  const demoItems = [
+    { name: 'Initial Consultation', quantity: 1, unit: 'session', unitPrice: 999, amount: 999 },
+    { name: 'Sample / Tasting Session', quantity: 1, unit: 'session', unitPrice: 1500, amount: 1500 },
+  ];
+  const demoSubtotal = demoItems.reduce((s, i) => s + i.amount, 0); // 2499
+  const demoTax = Math.round(demoSubtotal * tenant.taxRate) / 100; // 449.82 @ 18%
+  const demoTotal = Math.round((demoSubtotal + demoTax) * 100) / 100; // 2948.82
+  const halfTax = Math.round((demoTax / 2) * 100) / 100;
+
+  const proposalDoc = {
+    title: `Booking package — ${c1.fullName}`,
+    greeting: `Hi ${c1.fullName},`,
+    intro: 'Thanks for considering us! This quick booking package locks your date — the fee adjusts against your final invoice.',
+    sections: [
+      {
+        id: 'sec-booking',
+        title: 'Booking & Consultation',
+        items: demoItems.map((it, i) => ({ id: `it-${i}`, ...it })),
+      },
+    ],
+    terms: 'Booking fee is adjusted against the final invoice. Proposal valid for 14 days.',
+    discount: 0,
+    taxRate: tenant.taxRate,
+    taxLabel: tenant.taxLabel,
+    currency: tenant.currency,
+    clientName: c1.fullName,
+    vendorName: template.name,
+    validityDays: 14,
+  };
+
+  const demoProposal = await prisma.proposal.create({
+    data: {
+      tenantId: tenant.id,
+      contactId: c1.id,
+      createdById: owner.id,
+      title: proposalDoc.title,
+      brief: 'Quick booking package to reserve the date.',
+      contentJson: proposalDoc as object,
+      subtotal: demoSubtotal,
+      taxAmount: demoTax,
+      discount: 0,
+      total: demoTotal,
+      status: 'SENT',
+      sentAt: new Date(),
+      clientName: c1.fullName,
+      clientEmail: c1.email,
+      depositPercent: 0,
+    },
+  });
+
+  // Allocate invoice number from the sequence and issue the invoice as SENT.
+  await prisma.invoiceSequence.update({
+    where: { tenantId_series_financialYear: { tenantId: tenant.id, series: 'INV', financialYear: fy } },
+    data: { counter: 1 },
+  });
+  const invNumber = `INV/${fy}/00001`;
+  await prisma.invoice.create({
+    data: {
+      tenantId: tenant.id,
+      proposalId: demoProposal.id,
+      contactId: c1.id,
+      number: invNumber,
+      series: 'INV',
+      financialYear: fy,
+      type: 'TAX',
+      status: 'SENT',
+      placeOfSupply: 'IN-MH',
+      contentJson: { lineItems: demoItems, billToPlaceOfSupply: 'IN-MH' } as object,
+      subtotal: demoSubtotal,
+      cgst: halfTax,
+      sgst: halfTax,
+      igst: 0,
+      total: demoTotal,
+      amountPaid: 0,
+      sentAt: new Date(),
+    },
+  });
+
+  return { tenant, ownerEmail, password, demoProposalToken: demoProposal.shareToken };
 }
 
 function currentFinancialYear() {
@@ -191,6 +306,10 @@ async function main() {
     demos.push({ businessType: t.name, ...d });
   }
 
+  console.log('▶ Backfilling standard roles onto all tenants…');
+  const rb = await backfillStandardRoles();
+  console.log(`  ✓ ${rb.rolesUpserted} roles across ${rb.tenants} tenants`);
+
   console.log('▶ Seeding platform admin…');
   const admin = await seedPlatformAdmin();
 
@@ -203,6 +322,15 @@ async function main() {
   console.log('├────────────────────────────────────────────────────────────┤');
   console.log('│  Password (all):  demo1234                                 │');
   console.log('└────────────────────────────────────────────────────────────┘\n');
+
+  const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+  console.log('READY-TO-PAY DEMO PROPOSALS (≈₹2,949 · full payment clears under gateway cap):');
+  for (const d of demos) {
+    if (d.demoProposalToken) {
+      console.log(`  ${d.businessType.padEnd(22)} ${appUrl}/p/${d.demoProposalToken}`);
+    }
+  }
+  console.log('');
 
   console.log('┌────────────────────────────────────────────────────────────┐');
   console.log('│  PLATFORM ADMIN LOGIN  (/admin)                           │');

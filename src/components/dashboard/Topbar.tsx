@@ -1,6 +1,7 @@
 'use client';
 import { NotificationBell } from './NotificationBell';
 import { SearchTrigger } from './SearchTrigger';
+import { ThemeToggle } from './ThemeToggle';
 
 export function Topbar() {
   return (
@@ -9,6 +10,7 @@ export function Topbar() {
         <div className="flex-1">
           <SearchTrigger />
         </div>
+        <ThemeToggle />
         <NotificationBell />
       </div>
     </div>

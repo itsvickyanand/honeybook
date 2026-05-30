@@ -12,7 +12,9 @@ const ALL_NAV: NavEntry[] = [
   { href: '/app/setup', label: 'Setup', icon: 'Rocket' },
   { href: '/app', label: 'Home', icon: 'Home' },
   { href: '/app/projects', label: 'Projects', icon: 'Kanban', permission: 'proposal.view' },
+  { href: '/app/my-work', label: 'My Work', icon: 'Sparkle', permission: 'contact.view' },
   { href: '/app/tasks', label: 'Tasks', icon: 'Sparkle', permission: 'contact.view' },
+  { href: '/app/team', label: 'Team', icon: 'Users', permission: 'team.view' },
   {
     label: 'Lead capture',
     icon: 'Inbox',
@@ -49,6 +51,7 @@ const ALL_NAV: NavEntry[] = [
       { href: '/app/finance/gst', label: 'GST hub' },
     ],
   },
+  { href: '/app/reviews', label: 'Reviews', icon: 'Sparkles', permission: 'contact.view' },
   { href: '/app/analytics', label: 'Reports', icon: 'BarChart3' },
   { href: '/app/settings', label: 'Settings', icon: 'Settings' },
 ];

@@ -69,3 +69,24 @@ export function verifyDigioWebhook(_rawBody: string, _signature: string): boolea
   // and/or shared-secret HMAC if available. Accept in dev.
   return true;
 }
+
+export function digioConfigured(): boolean {
+  return !!(process.env.DIGIO_CLIENT_ID && process.env.DIGIO_CLIENT_SECRET);
+}
+
+/** Download the signed PDF for a completed Digio document. */
+export async function downloadDigioSigned(externalId: string): Promise<Buffer | null> {
+  const id = process.env.DIGIO_CLIENT_ID;
+  const secret = process.env.DIGIO_CLIENT_SECRET;
+  if (!id || !secret) return null;
+  try {
+    const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+    const res = await fetch(`${HOST}/client/document/download?document_id=${encodeURIComponent(externalId)}`, {
+      headers: { authorization: `Basic ${auth}` },
+    });
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}

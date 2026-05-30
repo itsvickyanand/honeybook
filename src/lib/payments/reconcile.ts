@@ -83,6 +83,20 @@ export async function reconcilePayment(paymentId: string): Promise<ReconcileResu
       catch (e) { logger.warn({ err: (e as Error).message }, 'auto-accept.fanout.failed'); }
       logger.info({ proposalId: proposal.id }, 'proposal.auto-accepted-on-deposit');
     }
+
+    // Booking confirmed on the FIRST payment (deposit or full) — create the
+    // Project + seed tasks now, not only on full payment. Idempotent.
+    try {
+      const { ensureProjectForProposal, seedTasksFromTemplate } = await import('../lifecycle');
+      const project = await ensureProjectForProposal(invoice.tenantId, invoice.proposalId);
+      if (project) {
+        await seedTasksFromTemplate(invoice.tenantId, project.id);
+        await prisma.invoice.update({ where: { id: invoice.id }, data: { projectId: project.id } }).catch(() => {});
+        await prisma.proposal.update({ where: { id: invoice.proposalId }, data: { projectId: project.id } }).catch(() => {});
+      }
+    } catch (e) {
+      logger.warn({ err: (e as Error).message, proposalId: invoice.proposalId }, 'reconcile.project-create.failed');
+    }
   }
 
   return { status, paid };

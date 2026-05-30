@@ -29,6 +29,7 @@ const patchSchema = z.object({
   clientName: z.string().min(1).max(120).optional(),
   clientEmail: z.string().email().nullable().optional(),
   depositPercent: z.number().min(0).max(100).optional(),
+  contractTemplateId: z.string().nullable().optional(),
   note: z.string().optional(),
 });
 
@@ -46,6 +47,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (parsed.data.clientName) data.clientName = parsed.data.clientName;
   if (parsed.data.clientEmail !== undefined) data.clientEmail = parsed.data.clientEmail || null;
   if (parsed.data.depositPercent !== undefined) data.depositPercent = parsed.data.depositPercent;
+  if (parsed.data.contractTemplateId !== undefined) data.contractTemplateId = parsed.data.contractTemplateId;
   if (parsed.data.status) {
     data.status = parsed.data.status;
     if (parsed.data.status === 'SENT' && !p.sentAt) {

@@ -29,21 +29,23 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     where: { tenantId: proposal.tenantId, proposalId: proposal.id },
     orderBy: { createdAt: 'desc' },
   });
+  // Compute the CURRENT totals from the proposal (single source of truth).
+  const doc = proposal.contentJson as unknown as ProposalDoc;
+  const lineItems: InvoiceLineItem[] = [];
+  for (const s of doc.sections) for (const it of s.items) {
+    if (it.quantity <= 0) continue;
+    lineItems.push({ name: it.name, quantity: it.quantity, unit: it.unit, unitPrice: it.unitPrice, amount: it.quantity * it.unitPrice });
+  }
+  const totals = computeInvoiceTotals({
+    lineItems,
+    taxRate: doc.taxRate ?? proposal.tenant.taxRate,
+    discount: doc.discount ?? 0,
+    tenantPlaceOfSupply: 'IN-MH',
+    billToPlaceOfSupply: 'IN-MH',
+  });
+
   if (!invoice) {
-    const doc = proposal.contentJson as unknown as ProposalDoc;
-    const lineItems: InvoiceLineItem[] = [];
-    for (const s of doc.sections) for (const it of s.items) {
-      if (it.quantity <= 0) continue;
-      lineItems.push({ name: it.name, quantity: it.quantity, unit: it.unit, unitPrice: it.unitPrice, amount: it.quantity * it.unitPrice });
-    }
     if (lineItems.length === 0) return NextResponse.json({ error: 'Nothing to invoice' }, { status: 400 });
-    const totals = computeInvoiceTotals({
-      lineItems,
-      taxRate: proposal.tenant.taxRate,
-      discount: doc.discount ?? 0,
-      tenantPlaceOfSupply: 'IN-MH',
-      billToPlaceOfSupply: 'IN-MH',
-    });
     invoice = await prisma.invoice.create({
       data: {
         tenantId: proposal.tenantId,
@@ -62,6 +64,19 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         status: 'DRAFT',
       },
     });
+  } else if (invoice.amountPaid === 0 && invoice.status !== 'PAID' && Math.abs(totals.total - invoice.total) > 0.01) {
+    // Keep the unpaid invoice in sync with proposal edits before sending a link.
+    invoice = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        contentJson: { lineItems, billToPlaceOfSupply: 'IN-MH' } as object,
+        subtotal: totals.subtotal,
+        cgst: totals.cgst,
+        sgst: totals.sgst,
+        igst: totals.igst,
+        total: totals.total,
+      },
+    });
   }
 
   if (invoice.status === 'PAID' || invoice.amountPaid >= invoice.total) {
@@ -69,7 +84,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   }
   if (invoice.status === 'DRAFT') invoice = await markInvoiceSent(invoice.id);
 
-  // 2. reuse-or-create PENDING payment
+  // 2. reuse-or-create PENDING payment (refresh amount if the balance changed)
   const due = Math.max(0, invoice.total - invoice.amountPaid);
   let payment = await prisma.payment.findFirst({
     where: { tenantId: invoice.tenantId, invoiceId: invoice.id, status: 'PENDING' },
@@ -87,15 +102,19 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         provider: 'razorpay',
       },
     });
+  } else if (payment.amount !== due) {
+    payment = await prisma.payment.update({ where: { id: payment.id }, data: { amount: due } });
   }
 
   const link = await createPaymentLink({
     amountInRupees: payment.amount,
     description: `Payment for invoice ${invoice.number ?? invoice.id}`,
-    reference: payment.id,
+    // reference_id must be globally unique per link; suffix with a timestamp so
+    // retries don't collide. The webhook resolves our Payment via notes.reference_id.
+    reference: `${payment.id}-${Date.now()}`,
     customer: { name: proposal.clientName ?? 'Client', email: proposal.clientEmail ?? undefined },
     callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${proposal.shareToken}?paid=1`,
-    notes: { proposalId: proposal.id, invoiceId: invoice.id },
+    notes: { reference_id: payment.id, proposalId: proposal.id, invoiceId: invoice.id },
   });
 
   await prisma.payment.update({ where: { id: payment.id }, data: { providerOrderId: link.providerOrderId } });

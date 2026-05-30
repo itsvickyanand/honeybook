@@ -35,7 +35,16 @@ export async function POST(req: Request) {
     clientName: parsed.data.clientName,
   });
   doc.title = parsed.data.title;
+  // Single source of truth for tax: seed the proposal's rate from the tenant's
+  // configured GST rate. The vendor can override it per-proposal in the editor;
+  // every downstream amount (invoice, pay link, portal) then reads doc.taxRate.
+  doc.taxRate = auth.tenant.taxRate ?? doc.taxRate;
   const totals = computeTotals(doc);
+
+  // Default a deposit on larger proposals so the client portal offers a
+  // smaller, immediately-payable amount (and big totals stay collectable even
+  // under gateway per-transaction caps). 25% on anything above ₹50k.
+  const defaultDeposit = totals.total > 50000 ? 25 : 0;
 
   // Auto-link to an existing Lead for this contact, if any.
   let leadId: string | undefined;
@@ -64,6 +73,7 @@ export async function POST(req: Request) {
       taxAmount: totals.taxAmount,
       discount: totals.discount,
       total: totals.total,
+      depositPercent: defaultDeposit,
       status: 'DRAFT',
       currentVersion: 1,
       versions: {

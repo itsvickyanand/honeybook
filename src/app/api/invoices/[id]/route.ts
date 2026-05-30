@@ -34,6 +34,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!parsed.success) return NextResponse.json({ error: 'Invalid' }, { status: 400 });
 
   if (parsed.data.status) {
+    // Paid states are DERIVED from payments — never set directly. This keeps
+    // amountPaid (= sum of SUCCESS payments) the single source of truth and
+    // prevents the "status PAID but Paid ₹0" mismatch. Record a payment instead.
+    if (parsed.data.status === 'PAID' || parsed.data.status === 'PARTIALLY_PAID') {
+      return NextResponse.json(
+        { error: 'Record a payment to mark this invoice paid — paid amounts are derived from payments.' },
+        { status: 400 }
+      );
+    }
     if (!canTransition(inv.status, parsed.data.status)) {
       return NextResponse.json({ error: `Cannot transition ${inv.status} → ${parsed.data.status}` }, { status: 400 });
     }

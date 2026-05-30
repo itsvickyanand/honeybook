@@ -104,6 +104,18 @@ function redisConfigured(): boolean {
 }
 
 /**
+ * Is a background worker actually consuming the BullMQ queues?
+ *
+ * Redis being configured is NOT enough — if no Render worker is running, jobs
+ * pushed to the queue are never processed (emails/notifications silently lost).
+ * Only route to the queue when BOTH Redis is up AND a worker is declared via
+ * WORKER_ENABLED=true. Otherwise run critical jobs inline.
+ */
+function workerEnabled(): boolean {
+  return redisConfigured() && process.env.WORKER_ENABLED === 'true';
+}
+
+/**
  * Inline-executable critical jobs. When Redis is unavailable, these run
  * synchronously in the request context so the user-facing flow stays correct.
  * Heavier jobs (PDF, embeddings) are skipped — they're optimizations, not
@@ -146,20 +158,23 @@ export async function enqueue(
   data: Record<string, unknown>,
   opts?: JobsOptions
 ) {
-  if (redisConfigured()) {
+  // Only use the queue when a worker is actually consuming it.
+  if (workerEnabled()) {
     const q = getQueue(JOB_TO_QUEUE[job]);
     return q.add(job, data, opts);
   }
 
-  // Degraded mode: no Redis. Inline-execute critical jobs.
+  // No worker (or no Redis): inline-execute critical jobs so emails,
+  // notifications, reconciliation and outbound webhooks still happen.
   const inline = INLINE_HANDLERS[job];
   if (inline) {
     try {
       const handler = await inline();
-      // Fire-and-forget so we don't block the caller's response. This isn't
-      // ideal (no error surface to the caller) but it's a deliberate trade-off
-      // for parity with BullMQ's async semantics.
-      handler(data).catch((e) =>
+      // AWAIT the work — on Vercel serverless, fire-and-forget after the
+      // response can be killed mid-flight (lost emails). Awaiting adds a little
+      // latency but guarantees delivery. Failures are logged, not thrown, so a
+      // single bad send doesn't break the calling request.
+      await handler(data).catch((e) =>
         logger.error({ job, err: (e as Error).message }, 'queue.inline.failed')
       );
       return { id: 'inline', name: job, data } as unknown as ReturnType<Queue['add']>;

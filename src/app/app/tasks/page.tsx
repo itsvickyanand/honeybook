@@ -2,7 +2,7 @@
  * Global task inbox — every open task across all the tenant's projects,
  * grouped by urgency. Vendors use this as their "what's next" view.
  */
-import { requireSession, getCurrentContext } from '@/lib/session';
+import { requireSession, getCurrentContext, visibleProjectScope } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { Card, CardHeader } from '@/components/ui/Card';
 import TaskList, { TaskItem } from '@/components/tasks/TaskList';
@@ -14,10 +14,29 @@ export default async function TasksPage() {
   const ctx = await getCurrentContext();
   if (!ctx) return null;
 
+  // Scope: tasks on projects the user can see, tasks assigned to them, or
+  // standalone (no-project) tasks. Owners/admins/managers see everything.
+  const scope = await visibleProjectScope({
+    userId: ctx.user.id,
+    tenantId: ctx.tenant.id,
+    permissions: ctx.permissions,
+  });
+  const scopeFilter =
+    scope === 'all'
+      ? {}
+      : {
+          OR: [
+            { projectId: { in: scope } },
+            { projectId: null },
+            { assigneeId: ctx.user.id },
+          ],
+        };
+
   const raw = await prisma.task.findMany({
     where: {
       tenantId: ctx.tenant.id,
       status: { not: 'CANCELLED' },
+      ...scopeFilter,
     },
     orderBy: [{ status: 'asc' }, { dueDate: 'asc' }, { sortOrder: 'asc' }],
     include: { project: { select: { id: true, name: true } } },
@@ -61,7 +80,7 @@ export default async function TasksPage() {
   const done = tasks.filter((t) => t.status === 'DONE').slice(0, 50);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-5xl space-y-5 p-6 md:p-10">
       <div>
         <h1 className="text-2xl font-semibold">Tasks</h1>
         <p className="text-sm text-[var(--color-muted)]">

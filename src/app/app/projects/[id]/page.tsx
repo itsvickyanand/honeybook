@@ -7,11 +7,19 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireSession, getCurrentContext } from '@/lib/session';
+import { requireSession, getCurrentContext, visibleProjectScope, projectInScope } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { Card, CardHeader } from '@/components/ui/Card';
 import TaskList, { TaskItem } from '@/components/tasks/TaskList';
 import { StageSelect, ProjectActivity, ProjectNotes, TagEditor } from './WorkspaceClient';
+import { TeamTab } from './TeamTab';
+import { ProjectFinancials } from './ProjectFinancials';
+import { ParticipantsBar } from './ParticipantsBar';
+import { ProjectActions } from './ProjectActions';
+import { WorkspaceFiles } from './WorkspaceFiles';
+import { ClientPortalPanel } from './ClientPortalPanel';
+import { toParticipantView } from '@/lib/participants';
+import { ensureProjectStages } from '@/lib/project-stages';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   Activity as ActivityIcon, FileText, CheckCircle2, Receipt, StickyNote, Info,
@@ -27,6 +35,7 @@ const TABS = [
   { id: 'tasks', label: 'Tasks', icon: CheckCircle2 },
   { id: 'financials', label: 'Financials', icon: Receipt },
   { id: 'notes', label: 'Notes', icon: StickyNote },
+  { id: 'team', label: 'Team', icon: Users },
   { id: 'details', label: 'Details', icon: Info },
 ] as const;
 
@@ -43,6 +52,14 @@ export default async function WorkspacePage({
   const { id } = await params;
   const sp = await searchParams;
   const tab = (TABS.find((t) => t.id === sp.tab)?.id ?? 'activity');
+
+  // Access scoping (Phase 3): members can only open projects they're on.
+  const scope = await visibleProjectScope({
+    userId: ctx.user.id,
+    tenantId: ctx.tenant.id,
+    permissions: ctx.permissions,
+  });
+  if (!projectInScope(scope, id)) notFound();
 
   const project = await prisma.project.findFirst({
     where: { id, tenantId: ctx.tenant.id },
@@ -65,6 +82,42 @@ export default async function WorkspacePage({
   const tags = Array.isArray(project.tags) ? (project.tags as string[]) : [];
   const shareToken = project.proposals[0]?.shareToken;
 
+  // Assignable members = all active users in the tenant.
+  const members = await prisma.user.findMany({
+    where: { tenantId: ctx.tenant.id, status: 'ACTIVE' },
+    select: { id: true, fullName: true, email: true },
+    orderBy: { fullName: 'asc' },
+  });
+  const [participants, teamsList, contacts] = await Promise.all([
+    prisma.projectMember.findMany({
+      where: { projectId: id },
+      include: {
+        user: { select: { id: true, fullName: true, email: true } },
+        contact: { select: { fullName: true, email: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.team.findMany({
+      where: { tenantId: ctx.tenant.id, archived: false },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.contact.findMany({
+      where: { tenantId: ctx.tenant.id },
+      select: { id: true, fullName: true, email: true },
+      orderBy: { fullName: 'asc' },
+      take: 200,
+    }),
+  ]);
+  const participantViews = participants.map(toParticipantView);
+  const teamParticipants = participants.filter((p) => p.kind === 'TEAM' && p.userId);
+  const documents = await prisma.document.findMany({
+    where: { tenantId: ctx.tenant.id, projectId: id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, title: true, category: true, status: true, sharedWithClient: true, fileId: true },
+  });
+  const projStages = await ensureProjectStages(ctx.tenant.id);
+
   // Activity feed (project + contact + lead scoped)
   const activities = await prisma.activity.findMany({
     where: {
@@ -81,7 +134,7 @@ export default async function WorkspacePage({
   });
 
   return (
-    <div className="mx-auto max-w-[1400px]">
+    <div className="mx-auto max-w-[1400px] p-6 md:p-10">
       {/* Cover banner */}
       <div
         className="relative h-44 w-full overflow-hidden rounded-2xl"
@@ -106,22 +159,24 @@ export default async function WorkspacePage({
         </div>
       </div>
 
-      {/* Action bar */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-          <Users className="h-4 w-4" />
-          <span>{1 + (project.contact ? 1 : 0)} participant{project.contact ? 's' : ''}</span>
-          {project.contact?.email && <span>· {project.contact.email}</span>}
+      {/* Participants + action bar */}
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+        <ParticipantsBar
+          projectId={id}
+          youName={ctx.user.fullName ?? 'You'}
+          initial={participantViews}
+          users={members}
+          contacts={contacts}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href={`/app/calendar?project=${id}`} className="btn-ghost text-sm"><CalendarDays className="h-4 w-4" /> Schedule</Link>
+          <ProjectActions projectId={id} />
+          {shareToken && (
+            <Link href={`/p/${shareToken}/project`} target="_blank" className="btn-secondary text-sm">
+              <ExternalLink className="h-3.5 w-3.5" /> Client portal
+            </Link>
+          )}
         </div>
-        {shareToken && (
-          <Link
-            href={`/p/${shareToken}/project`}
-            target="_blank"
-            className="btn-secondary text-sm"
-          >
-            <ExternalLink className="h-3.5 w-3.5" /> Client portal
-          </Link>
-        )}
       </div>
 
       <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -169,33 +224,22 @@ export default async function WorkspacePage({
             )}
 
             {tab === 'files' && (
-              <Card>
-                <CardHeader title="Files" description="Proposals, invoices, galleries and documents for this workspace." />
-                <div className="space-y-2 text-sm">
-                  {project.proposals.map((p) => (
-                    <Link key={p.id} href={`/app/proposals/${p.id}`} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 hover:border-[var(--color-primary)]/60">
-                      <span>Proposal · {p.title}</span><span className="chip text-xs">{p.status}</span>
-                    </Link>
-                  ))}
-                  {project.invoices.map((i) => (
-                    <Link key={i.id} href={`/app/invoices/${i.id}`} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 hover:border-[var(--color-primary)]/60">
-                      <span>Invoice · {i.number ?? 'Draft'}</span><span className="chip text-xs">{i.status}</span>
-                    </Link>
-                  ))}
-                  {project.proposals.length === 0 && project.invoices.length === 0 && (
-                    <p className="text-[var(--color-muted)]">No files yet.</p>
-                  )}
-                </div>
-              </Card>
+              <WorkspaceFiles
+                projectId={id}
+                proposals={project.proposals.map((p) => ({ id: p.id, title: p.title, status: p.status }))}
+                invoices={project.invoices.map((i) => ({ id: i.id, number: i.number, status: i.status, total: i.total, amountPaid: i.amountPaid }))}
+                documents={documents.map((d) => ({ id: d.id, title: d.title, category: d.category, status: d.status, sharedWithClient: d.sharedWithClient, fileId: d.fileId }))}
+              />
             )}
 
             {tab === 'tasks' && (
               <Card>
-                <CardHeader title="Tasks" description="Auto-seeded from the template. Add, assign, reorder." />
+                <CardHeader title="Tasks" description="You and your team see all tasks, while clients and collaborators only see theirs." />
                 <TaskList
                   projectId={id}
                   grouped
                   showProject={false}
+                  members={members}
                   initialTasks={project.tasks.map((t): TaskItem => ({
                     id: t.id, title: t.title, description: t.description,
                     status: t.status as TaskItem['status'], category: t.category,
@@ -209,11 +253,6 @@ export default async function WorkspacePage({
 
             {tab === 'financials' && (
               <div className="space-y-6">
-                <div className="grid grid-cols-3 gap-3">
-                  <Stat label="Quoted" value={formatINR(project.totalValue, cur, loc)} />
-                  <Stat label="Paid" value={formatINR(totalPaid, cur, loc)} accent="emerald" />
-                  <Stat label="Balance" value={formatINR(balance, cur, loc)} accent={balance > 0 ? 'amber' : undefined} />
-                </div>
                 {project.paymentSchedules[0] && (
                   <Card>
                     <CardHeader title="Payment plan" />
@@ -227,28 +266,40 @@ export default async function WorkspacePage({
                     </ul>
                   </Card>
                 )}
-                <Card>
-                  <CardHeader title="Invoices" />
-                  {project.invoices.length === 0 ? (
-                    <p className="text-sm text-[var(--color-muted)]">No invoices.</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {project.invoices.map((inv) => (
-                        <li key={inv.id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
-                          <Link href={`/app/invoices/${inv.id}`} className="hover:underline">{inv.number ?? 'Draft'}</Link>
-                          <div className="text-right tabular-nums">
-                            <div>{formatINR(inv.total, cur, loc)}</div>
-                            {inv.amountPaid > 0 && <div className="text-xs text-emerald-500">Paid {formatINR(inv.amountPaid, cur, loc)}</div>}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </Card>
+                <ProjectFinancials
+                  projectId={id}
+                  projectName={project.name}
+                  quoted={project.totalValue}
+                  totalPaid={totalPaid}
+                  balance={balance}
+                  currency={cur}
+                  locale={loc}
+                  invoices={project.invoices.map((inv) => ({
+                    id: inv.id,
+                    number: inv.number,
+                    total: inv.total,
+                    amountPaid: inv.amountPaid,
+                    status: inv.status,
+                  }))}
+                />
               </div>
             )}
 
             {tab === 'notes' && <ProjectNotes projectId={id} initial={project.notesText ?? ''} />}
+
+            {tab === 'team' && (
+              <TeamTab
+                projectId={id}
+                users={members}
+                teams={teamsList}
+                currentTeamId={project.teamId ?? null}
+                currentOwnerId={project.ownerId ?? null}
+                initialParticipants={teamParticipants.map((p) => ({
+                  userId: p.userId!, role: p.role,
+                  fullName: p.user!.fullName, email: p.user!.email,
+                }))}
+              />
+            )}
 
             {tab === 'details' && (
               <Card>
@@ -275,11 +326,19 @@ export default async function WorkspacePage({
         {/* Meta sidebar */}
         <aside className="space-y-4">
           <Card>
+            <CardHeader title="Client portal" />
+            <ClientPortalPanel
+              url={shareToken ? `${process.env.APP_URL ?? ''}/p/${shareToken}/project` : null}
+              clientEmail={project.contact?.email ?? null}
+            />
+          </Card>
+
+          <Card>
             <CardHeader title="About this project" />
             <div className="space-y-4 text-sm">
               <div>
                 <label className="label-base">Stage</label>
-                <StageSelect projectId={id} value={project.stage} />
+                <StageSelect projectId={id} value={project.stage} stages={projStages.map((s) => ({ key: s.key, name: s.name }))} />
               </div>
               <div>
                 <label className="label-base">Tags</label>
@@ -320,16 +379,6 @@ export default async function WorkspacePage({
           )}
         </aside>
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: 'emerald' | 'amber' }) {
-  const color = accent === 'emerald' ? 'text-emerald-500' : accent === 'amber' ? 'text-amber-500' : '';
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
-      <div className={`text-sm font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   );
 }

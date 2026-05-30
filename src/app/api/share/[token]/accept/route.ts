@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { onProposalStatusChanged } from '@/lib/lifecycle';
+import { createSignRequest } from '@/lib/esign/digio';
+import { logger } from '@/lib/logger';
 
 const schema = z.object({ decision: z.enum(['ACCEPT', 'DECLINE']), note: z.string().max(500).optional() });
 
@@ -35,5 +37,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   // Fan-out — non-blocking, errors are swallowed inside.
   onProposalStatusChanged(p.id, newStatus, oldStatus).catch(() => {});
 
-  return NextResponse.json({ ok: true });
+  // On ACCEPT, create an e-sign request (Digio; mock when unconfigured) so the
+  // contract-signing step exists. Idempotent: skip if one already exists.
+  let signingUrl: string | null = null;
+  if (parsed.data.decision === 'ACCEPT') {
+    try {
+      const existing = await prisma.signatureRequest.findFirst({
+        where: { proposalId: p.id, status: { in: ['PENDING', 'SENT', 'SIGNED'] } },
+      });
+      if (!existing) {
+        const sig = await createSignRequest({
+          signerName: p.clientName ?? 'Client',
+          signerEmail: p.clientEmail ?? 'client@example.com',
+          documentBase64: '', // PDF is rendered async by the worker; Digio link flow doesn't block on it in mock
+          filename: `${p.title}-agreement.pdf`,
+          redirectUrl: `${process.env.APP_URL ?? new URL(req.url).origin}/p/${token}?signed=1`,
+        });
+        await prisma.signatureRequest.create({
+          data: {
+            tenantId: p.tenantId,
+            proposalId: p.id,
+            provider: sig.mock ? 'mock' : 'digio',
+            externalId: sig.externalId,
+            signerName: p.clientName ?? 'Client',
+            signerEmail: p.clientEmail ?? '',
+            signerPhone: undefined,
+            status: 'SENT',
+            payload: { signingUrl: sig.signingUrl } as object,
+            expiresAt: new Date(Date.now() + 14 * 86400_000),
+          },
+        });
+        signingUrl = sig.mock ? `/p/${token}?sign=mock` : sig.signingUrl;
+      }
+    } catch (e) {
+      logger.warn({ proposalId: p.id, err: (e as Error).message }, 'accept.esign.failed');
+    }
+  }
+
+  return NextResponse.json({ ok: true, signingUrl });
 }

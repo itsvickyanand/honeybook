@@ -25,6 +25,11 @@ export interface TaskItem {
   project?: { id: string; name: string } | null;
 }
 
+export interface AssignableMember {
+  id: string;
+  fullName: string;
+}
+
 interface TaskListProps {
   initialTasks: TaskItem[];
   projectId?: string;
@@ -34,6 +39,8 @@ interface TaskListProps {
   grouped?: boolean;
   /** When true, show the project name on each task. Default true outside a project page. */
   showProject?: boolean;
+  /** Members assignable to tasks — renders an assignee dropdown when provided. */
+  members?: AssignableMember[];
 }
 
 const PRI_COLOR: Record<TaskItem['priority'], string> = {
@@ -48,12 +55,27 @@ export default function TaskList({
   allowCreate = true,
   grouped = false,
   showProject,
+  members,
 }: TaskListProps) {
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks);
   const [composing, setComposing] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [, startTransition] = useTransition();
   const showProj = showProject ?? !projectId;
+
+  async function assign(taskId: string, assigneeId: string | null) {
+    setTasks((cur) => cur.map((x) => (x.id === taskId ? { ...x, assigneeId } : x)));
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assigneeId }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (e) {
+      toast.error((e as Error).message || 'Failed to assign');
+    }
+  }
 
   async function toggleStatus(t: TaskItem) {
     const next = t.status === 'DONE' ? 'TODO' : 'DONE';
@@ -121,14 +143,14 @@ export default function TaskList({
             <EmptyState message="Nothing open. Add a task or wait for the next booking." />
           ) : (
             todo.map((t) => (
-              <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} />
+              <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} members={members} onAssign={assign} />
             ))
           )}
         </Section>
         {done.length > 0 && (
           <Section title={`Done (${done.length})`}>
             {done.map((t) => (
-              <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} />
+              <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} members={members} onAssign={assign} />
             ))}
           </Section>
         )}
@@ -151,7 +173,7 @@ export default function TaskList({
         <EmptyState message="No tasks yet." />
       ) : (
         tasks.map((t) => (
-          <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} />
+          <Row key={t.id} task={t} onToggle={toggleStatus} onDelete={remove} showProject={showProj} members={members} onAssign={assign} />
         ))
       )}
     </div>
@@ -226,11 +248,15 @@ function Row({
   onToggle,
   onDelete,
   showProject,
+  members,
+  onAssign,
 }: {
   task: TaskItem;
   onToggle: (t: TaskItem) => void;
   onDelete: (id: string) => void;
   showProject: boolean;
+  members?: AssignableMember[];
+  onAssign?: (taskId: string, assigneeId: string | null) => void;
 }) {
   const isDone = task.status === 'DONE';
   const isOverdue =
@@ -274,6 +300,20 @@ function Row({
           <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', PRI_COLOR[task.priority])}>
             {task.priority}
           </span>
+          {members && members.length > 0 && onAssign && (
+            <select
+              value={task.assigneeId ?? ''}
+              onChange={(e) => onAssign(task.id, e.target.value || null)}
+              onClick={(e) => e.stopPropagation()}
+              className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[11px] text-[var(--color-text)] outline-none"
+              title="Assignee"
+            >
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{m.fullName}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
       <button
@@ -289,9 +329,8 @@ function Row({
 }
 
 function EmptyState({ message }: { message: string }) {
+  // Slim, no nested box — keeps empty sections from becoming tall empty cards.
   return (
-    <div className="rounded-lg border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-muted)]">
-      {message}
-    </div>
+    <div className="py-1.5 text-sm text-[var(--color-muted)]">{message}</div>
   );
 }

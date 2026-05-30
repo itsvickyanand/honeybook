@@ -11,7 +11,20 @@ const schema = z.object({
   ownerFullName: z.string().min(2).max(80),
   email: z.string().email(),
   password: z.string().min(8).max(80),
+  phone: z.string().max(20).optional(),
+  // GST onboarding branch
+  gstRegistered: z.boolean().optional(),
+  gstin: z.string().max(15).optional(),
+  pan: z.string().max(10).optional(),
+  defaultSacCode: z.string().max(10).optional(),
+  uiLanguage: z.enum(['en', 'hi']).optional(),
+  // DPDP Act consent — required to create an account
+  dpdpConsent: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the data-processing consent (DPDP Act) to continue.' }),
+  }),
 });
+
+const DPDP_CONSENT_VERSION = '2026-05-v1';
 
 export async function POST(req: Request) {
   const blocked = await enforceRateLimit(req, { keyPrefix: 'auth.signup', limit: 5, windowMs: 60_000 });
@@ -21,7 +34,8 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input', issues: parsed.error.flatten() }, { status: 400 });
   }
-  const { businessName, businessTypeSlug, ownerFullName, email, password } = parsed.data;
+  const { businessName, businessTypeSlug, ownerFullName, email, password, phone,
+    gstRegistered, gstin, pan, defaultSacCode, uiLanguage } = parsed.data;
 
   // Check duplicate email across all tenants (one email = one user max in this MVP)
   const existing = await prisma.user.findFirst({ where: { email: email.toLowerCase() } });
@@ -36,6 +50,13 @@ export async function POST(req: Request) {
       ownerEmail: email,
       ownerFullName,
       password,
+      phone,
+      gstRegistered,
+      gstin,
+      pan,
+      defaultSacCode,
+      uiLanguage,
+      dpdpConsentVersion: DPDP_CONSENT_VERSION,
     });
 
     await issueSession({

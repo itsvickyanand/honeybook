@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireApi } from '@/lib/api';
 import { prisma } from '@/lib/db';
+import { parsePermissions, visibleProjectScope, projectScopeWhere } from '@/lib/session';
 
 const schema = z.object({
   name: z.string().min(1),
@@ -14,8 +15,13 @@ const schema = z.object({
 export async function GET() {
   const auth = await requireApi('contact.view');
   if ('error' in auth) return auth.error;
+  const scope = await visibleProjectScope({
+    userId: auth.user.id,
+    tenantId: auth.tenant.id,
+    permissions: parsePermissions(auth.role.permissions as unknown),
+  });
   const projects = await prisma.project.findMany({
-    where: { tenantId: auth.tenant.id },
+    where: projectScopeWhere(scope, auth.tenant.id),
     include: { contact: true, members: true },
     orderBy: { createdAt: 'desc' },
   });

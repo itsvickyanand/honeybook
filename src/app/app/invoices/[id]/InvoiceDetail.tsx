@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Send, CheckCircle2, Ban, Plus, FileMinus } from 'lucide-react';
+import { Send, CheckCircle2, Ban, Plus, FileMinus, RefreshCw, Download, Mail, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { Input, Select, Textarea } from '@/components/ui/Input';
@@ -53,9 +53,42 @@ export function InvoiceDetail({
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [paymentOpen, setPaymentOpen] = React.useState(false);
+  const [payFull, setPayFull] = React.useState(false);
   const [creditOpen, setCreditOpen] = React.useState(false);
+  const [emailOpen, setEmailOpen] = React.useState(false);
   const lineItems = invoice.content.lineItems ?? [];
   const balance = Math.max(0, invoice.total - invoice.amountPaid);
+
+  async function shareInvoice() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoice.id}/share`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      await navigator.clipboard.writeText(data.url).catch(() => {});
+      toast.success('Public link copied to clipboard');
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncPayment() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoice.id}/sync`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      toast.success(data.updated ? 'Payment found and applied' : 'No new payment yet');
+      if (data.updated) router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function transition(status: string) {
     setBusy(true);
@@ -123,20 +156,38 @@ export function InvoiceDetail({
               <Ban className="h-4 w-4" /> Void
             </Button>
           )}
-          {invoice.status === 'SENT' && (
-            <Button variant="secondary" onClick={() => transition('PAID')} loading={busy}>
-              <CheckCircle2 className="h-4 w-4" /> Mark fully paid
-            </Button>
+          {['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE'].includes(invoice.status) && (
+            <>
+              <Button variant="secondary" onClick={() => { setPayFull(true); setPaymentOpen(true); }}>
+                <CheckCircle2 className="h-4 w-4" /> Mark fully paid
+              </Button>
+              <Button variant="secondary" onClick={() => { setPayFull(false); setPaymentOpen(true); }}>
+                <Plus className="h-4 w-4" /> Record payment
+              </Button>
+            </>
           )}
           {['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE'].includes(invoice.status) && (
-            <Button variant="secondary" onClick={() => setPaymentOpen(true)}>
-              <Plus className="h-4 w-4" /> Record payment
+            <Button variant="ghost" onClick={syncPayment} loading={busy}>
+              <RefreshCw className="h-4 w-4" /> Sync payment status
             </Button>
           )}
           {['SENT', 'VIEWED', 'PARTIALLY_PAID', 'PAID'].includes(invoice.status) && (
             <Button variant="secondary" onClick={() => setCreditOpen(true)}>
               <FileMinus className="h-4 w-4" /> Issue credit note
             </Button>
+          )}
+          <a href={`/api/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer">
+            <Button variant="ghost"><Download className="h-4 w-4" /> Download PDF</Button>
+          </a>
+          {invoice.status !== 'VOID' && (
+            <>
+              <Button variant="ghost" onClick={() => setEmailOpen(true)}>
+                <Mail className="h-4 w-4" /> Email invoice
+              </Button>
+              <Button variant="ghost" onClick={shareInvoice} loading={busy}>
+                <Link2 className="h-4 w-4" /> Copy share link
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -234,6 +285,7 @@ export function InvoiceDetail({
         balance={balance}
         currency={currency}
         locale={locale}
+        title={payFull ? 'Mark fully paid' : 'Record payment'}
         onDone={() => router.refresh()}
       />
       <CreditNoteModal
@@ -245,12 +297,68 @@ export function InvoiceDetail({
         locale={locale}
         onDone={() => router.refresh()}
       />
+      <EmailInvoiceModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        invoiceId={invoice.id}
+        onDone={() => router.refresh()}
+      />
     </motion.div>
   );
 }
 
+function EmailInvoiceModal({
+  open, onClose, invoiceId, onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  invoiceId: string;
+  onDone: () => void;
+}) {
+  const [to, setTo] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/send-email`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: to || undefined, message: message || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      toast.success(`Invoice emailed to ${data.to}`);
+      onClose();
+      onDone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Email invoice">
+      <p className="mb-3 text-sm text-[var(--color-muted)]">
+        Sends a View &amp; Pay link. Leave the address blank to use the client&apos;s email on file.
+      </p>
+      <form onSubmit={submit} className="space-y-3">
+        <Input label="Recipient email" type="email" placeholder="client@example.com" value={to} onChange={(e) => setTo(e.target.value)} />
+        <Textarea label="Message (optional)" value={message} onChange={(e) => setMessage(e.target.value)} />
+        <div className="flex justify-end gap-2 border-t pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={saving}>Send</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function RecordPaymentModal({
-  open, onClose, invoiceId, balance, currency, locale, onDone,
+  open, onClose, invoiceId, balance, currency, locale, title = 'Record payment', onDone,
 }: {
   open: boolean;
   onClose: () => void;
@@ -258,10 +366,11 @@ function RecordPaymentModal({
   balance: number;
   currency: string;
   locale: string;
+  title?: string;
   onDone: () => void;
 }) {
   const [amount, setAmount] = React.useState(String(balance));
-  const [method, setMethod] = React.useState<'CASH' | 'CHEQUE' | 'BANK_TRANSFER' | 'UPI' | 'CARD'>('BANK_TRANSFER');
+  const [method, setMethod] = React.useState<'CASH' | 'CHEQUE' | 'BANK_TRANSFER' | 'NETBANKING' | 'UPI' | 'CARD'>('BANK_TRANSFER');
   const [paidAt, setPaidAt] = React.useState(() => new Date().toISOString().slice(0, 16));
   const [note, setNote] = React.useState('');
   const [saving, setSaving] = React.useState(false);
@@ -296,7 +405,7 @@ function RecordPaymentModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Record payment">
+    <Modal open={open} onClose={onClose} title={title}>
       <p className="text-sm text-[var(--color-muted)] mb-3">
         Outstanding balance: <strong>{formatCurrency(balance, currency, locale)}</strong>
       </p>
@@ -304,6 +413,7 @@ function RecordPaymentModal({
         <Input label="Amount" type="number" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} required />
         <Select label="Method" value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
           <option value="BANK_TRANSFER">Bank Transfer</option>
+          <option value="NETBANKING">Net Banking</option>
           <option value="UPI">UPI</option>
           <option value="CASH">Cash</option>
           <option value="CHEQUE">Cheque</option>

@@ -28,7 +28,15 @@ export async function provisionTenant(args: {
   businessTypeSlug: string;
   ownerEmail: string;
   ownerFullName: string;
-  password: string;
+  password?: string;
+  phone?: string;
+  gstRegistered?: boolean;
+  gstin?: string;
+  pan?: string;
+  defaultSacCode?: string;
+  uiLanguage?: string;
+  dpdpConsentVersion?: string;
+  googleSub?: string;
 }) {
   const bt = await prisma.businessType.findUnique({ where: { slug: args.businessTypeSlug } });
   if (!bt) throw new Error('Unknown business type');
@@ -42,8 +50,8 @@ export async function provisionTenant(args: {
     slug = `${baseSlug}-${suffix++}`;
   }
 
-  // Ensure email is globally available within the tenant (it always is on a new tenant)
-  const passwordHash = await hashPassword(args.password);
+  // Password is optional for SSO / OTP signups.
+  const passwordHash = args.password ? await hashPassword(args.password) : null;
 
   const tenant = await prisma.tenant.create({
     data: {
@@ -51,6 +59,12 @@ export async function provisionTenant(args: {
       name: args.businessName,
       businessTypeId: bt.id,
       brandColor: bt.accentColor,
+      gstRegistered: args.gstRegistered ?? false,
+      gstin: args.gstRegistered ? args.gstin ?? null : null,
+      pan: args.pan ?? null,
+      defaultSacCode: args.gstRegistered ? args.defaultSacCode ?? null : null,
+      uiLanguage: args.uiLanguage ?? 'en',
+      locale: args.uiLanguage === 'hi' ? 'hi-IN' : 'en-IN',
     },
   });
 
@@ -79,6 +93,10 @@ export async function provisionTenant(args: {
       email: args.ownerEmail.toLowerCase().trim(),
       passwordHash,
       fullName: args.ownerFullName,
+      phone: args.phone ?? null,
+      googleSub: args.googleSub ?? null,
+      dpdpConsentAt: args.dpdpConsentVersion ? new Date() : null,
+      dpdpConsentVersion: args.dpdpConsentVersion ?? null,
     },
   });
 

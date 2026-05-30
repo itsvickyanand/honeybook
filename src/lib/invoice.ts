@@ -12,6 +12,7 @@
 import { prisma } from './db';
 import { currentFinancialYear } from './financial-year';
 import { enqueue, JOB_NAMES } from './queue';
+import { computeMoney } from './money';
 
 export type InvoiceStatus =
   | 'DRAFT'
@@ -66,32 +67,26 @@ export interface InvoiceTotals {
 }
 
 export function computeInvoiceTotals(args: ComputeArgs): InvoiceTotals {
-  let subtotal = 0;
-  for (const li of args.lineItems) {
-    li.amount = round2(li.quantity * li.unitPrice);
-    subtotal += li.amount;
-  }
-  const discount = args.discount ?? 0;
-  const taxable = Math.max(0, subtotal - discount);
-  const tax = round2((taxable * args.taxRate) / 100);
-  const sameState =
+  const sameState = !!(
     args.tenantPlaceOfSupply && args.billToPlaceOfSupply &&
-    args.tenantPlaceOfSupply === args.billToPlaceOfSupply;
-  const cgst = sameState ? round2(tax / 2) : 0;
-  const sgst = sameState ? round2(tax / 2) : 0;
-  const igst = sameState ? 0 : tax;
+    args.tenantPlaceOfSupply === args.billToPlaceOfSupply
+  );
+  const m = computeMoney({
+    lineItems: args.lineItems,
+    taxRate: args.taxRate,
+    discount: args.discount,
+    intraState: sameState,
+  });
   return {
-    subtotal: round2(subtotal),
-    discount: round2(discount),
-    taxable: round2(taxable),
-    cgst,
-    sgst,
-    igst,
-    total: round2(taxable + cgst + sgst + igst),
+    subtotal: m.subtotal,
+    discount: m.discount,
+    taxable: m.taxable,
+    cgst: m.cgst,
+    sgst: m.sgst,
+    igst: m.igst,
+    total: m.total,
   };
 }
-
-function round2(n: number) { return Math.round(n * 100) / 100; }
 
 /**
  * Allocate the next invoice number atomically, locking the (tenant, series, FY) row.

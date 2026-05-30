@@ -9,6 +9,7 @@ const schema = z.object({
   email: z.string().email(),
   fullName: z.string().min(1).max(80).optional(),
   roleId: z.string(),
+  teamIds: z.array(z.string()).max(20).optional(),
 });
 
 export async function POST(req: Request) {
@@ -36,6 +37,7 @@ export async function POST(req: Request) {
       roleId: role.id,
       invitedById: auth.user.id,
       token,
+      teamIds: parsed.data.teamIds && parsed.data.teamIds.length > 0 ? (parsed.data.teamIds as object) : undefined,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });

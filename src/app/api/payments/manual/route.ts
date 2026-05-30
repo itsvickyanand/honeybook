@@ -11,7 +11,7 @@ import { reconcilePayment } from '@/lib/payments/reconcile';
 const schema = z.object({
   invoiceId: z.string(),
   amount: z.number().positive(),
-  method: z.enum(['CASH', 'CHEQUE', 'BANK_TRANSFER', 'UPI', 'CARD']),
+  method: z.enum(['CASH', 'CHEQUE', 'BANK_TRANSFER', 'NETBANKING', 'UPI', 'CARD', 'RAZORPAY']),
   paidAt: z.string().datetime().optional(),
   note: z.string().optional(),
 });

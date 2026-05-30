@@ -92,23 +92,31 @@ export function FormEditor({
         <h2 className="font-semibold mb-4">Fields</h2>
         <div className="space-y-2">
           {fields.map((f, i) => (
-            <div key={i} className="grid gap-2 md:grid-cols-12 items-start rounded-xl border bg-[var(--color-surface-2)] p-3">
-              <Input className="md:col-span-3" placeholder="name" value={f.name} onChange={(e) => update(i, { name: e.target.value })} />
-              <Input className="md:col-span-3" placeholder="Label" value={f.label} onChange={(e) => update(i, { label: e.target.value })} />
-              <Select className="md:col-span-2" value={f.type} onChange={(e) => update(i, { type: e.target.value })}>
-                {['text','email','phone','textarea','select','number'].map((t) => <option key={t} value={t}>{t}</option>)}
-              </Select>
+            <div key={i} className="grid gap-2 md:grid-cols-12 items-center rounded-xl border bg-[var(--color-surface-2)] p-3">
+              <div className="md:col-span-3">
+                <Input placeholder="Field key (e.g. name)" value={f.name} onChange={(e) => update(i, { name: e.target.value })} />
+              </div>
+              <div className="md:col-span-3">
+                <Input placeholder="Label" value={f.label} onChange={(e) => update(i, { label: e.target.value })} />
+              </div>
+              <div className="md:col-span-2">
+                <Select value={f.type} onChange={(e) => update(i, { type: e.target.value })}>
+                  {['text','email','phone','textarea','select','number'].map((t) => <option key={t} value={t}>{t}</option>)}
+                </Select>
+              </div>
               <label className="md:col-span-2 flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={!!f.required} onChange={(e) => update(i, { required: e.target.checked })} /> required
               </label>
-              <Input
-                className="md:col-span-1"
-                placeholder="Options"
-                value={(f.options ?? []).join(',')}
-                onChange={(e) => update(i, { options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                disabled={f.type !== 'select'}
-              />
-              <button onClick={() => remove(i)} className="md:col-span-1 btn-ghost p-2 text-red-400">
+              <div className="md:col-span-1">
+                <Input
+                  placeholder="Options"
+                  value={(f.options ?? []).join(',')}
+                  onChange={(e) => update(i, { options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
+                  disabled={f.type !== 'select'}
+                  title="Comma-separated options (for select type)"
+                />
+              </div>
+              <button onClick={() => remove(i)} className="md:col-span-1 btn-ghost p-2 text-red-400 justify-self-end" aria-label="Remove field">
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>

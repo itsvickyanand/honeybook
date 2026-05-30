@@ -31,6 +31,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       status: 'ACTIVE',
     },
   });
+  // Place the new member on the teams chosen at invite time.
+  const teamIds = Array.isArray(invite.teamIds) ? (invite.teamIds as string[]) : [];
+  if (teamIds.length > 0) {
+    const validTeams = await prisma.team.findMany({
+      where: { id: { in: teamIds }, tenantId: invite.tenantId },
+      select: { id: true },
+    });
+    if (validTeams.length > 0) {
+      await prisma.teamMembership.createMany({
+        data: validTeams.map((t) => ({ teamId: t.id, userId: user.id, teamRole: 'MEMBER' })),
+        skipDuplicates: true,
+      });
+    }
+  }
+
   await prisma.userInvite.update({
     where: { id: invite.id },
     data: { acceptedAt: new Date() },

@@ -1,0 +1,12 @@
+.backup/
+.next/
+.git/
+node_modules/
+uploads/
+tally-agent/
+prisma/dev.db
+*.tsbuildinfo
+.DS_Store
+id.txt
+docker-compose.yml
+docker-compose.prod.yml

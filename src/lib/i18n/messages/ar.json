@@ -1,0 +1,13 @@
+{
+  "portal.proposalFrom": "عرض من",
+  "portal.preparedFor": "تم تحضيره لـ",
+  "portal.acceptProposal": "قبول العرض",
+  "portal.requestChanges": "طلب تعديلات",
+  "portal.decline": "رفض",
+  "portal.pay": "ادفع",
+  "portal.sign": "التوقيع على الاتفاقية",
+  "portal.whatsIncluded": "ما المُتضمَّن",
+  "portal.terms": "الشروط",
+  "portal.total": "المجموع",
+  "portal.validity": "العرض ساري المفعول لمدة {days} يومًا"
+}

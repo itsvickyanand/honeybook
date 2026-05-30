@@ -1,0 +1,71 @@
+# Local infrastructure for development.
+# Brings up Postgres 16 (with pgvector) + Redis 7 + MinIO (S3-compatible).
+#
+# Quick start:
+#   docker compose up -d
+#   npm run db:reset      # apply schema + seed
+#   npm run dev
+#
+# To stop and wipe data:
+#   docker compose down -v
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: honeybook_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: honeybook
+      POSTGRES_PASSWORD: honeybook
+      POSTGRES_DB: honeybook
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./prisma/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeybook -d honeybook"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: honeybook_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    # S3-compatible object storage for local file service development.
+    # Console: http://localhost:9001 (login: honeybook / honeybook)
+    image: minio/minio:latest
+    container_name: honeybook_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: honeybook
+      MINIO_ROOT_PASSWORD: honeybook123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

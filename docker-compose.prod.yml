@@ -1,0 +1,85 @@
+# Production reference docker-compose.
+# This is illustrative — in real production these services run on managed
+# infrastructure (RDS / ElastiCache / S3 / ECS Fargate). Use this for staging
+# or self-hosted deployments.
+#
+# Differences from docker-compose.yml (dev):
+#   - PgBouncer in front of Postgres (transaction pooling)
+#   - Redis: two instances (queue + cache) per BRD Addendum Fix 17
+#   - Application: API + worker tier on separate containers
+#   - Resource limits set to sane defaults
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: honeybook
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing}
+      POSTGRES_DB: honeybook
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits: { memory: 4G, cpus: '2.0' }
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: always
+    depends_on: [postgres]
+    environment:
+      DATABASE_URL: postgresql://honeybook:${POSTGRES_PASSWORD}@postgres:5432/honeybook
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+    ports:
+      - "6432:5432"
+
+  redis-cache:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
+    deploy:
+      resources:
+        limits: { memory: 1.5G }
+
+  redis-queue:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisqueue:/data
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  api:
+    build: .
+    restart: always
+    depends_on: [pgbouncer, redis-cache, redis-queue]
+    environment:
+      DATABASE_URL: postgresql://honeybook_app:${APP_DB_PASSWORD}@pgbouncer:5432/honeybook
+      REDIS_URL: redis://redis-cache:6379
+      REDIS_QUEUE_URL: redis://redis-queue:6379
+    command: ["npm", "run", "start"]
+    deploy:
+      replicas: 3
+      resources:
+        limits: { memory: 1G, cpus: '1.0' }
+
+  worker:
+    build: .
+    restart: always
+    depends_on: [pgbouncer, redis-queue]
+    environment:
+      DATABASE_URL: postgresql://honeybook_app:${APP_DB_PASSWORD}@pgbouncer:5432/honeybook
+      REDIS_URL: redis://redis-queue:6379
+    command: ["npm", "run", "start:worker"]
+    deploy:
+      replicas: 2
+      resources:
+        limits: { memory: 1.5G, cpus: '1.0' }
+
+volumes:
+  pgdata:
+  redisqueue:

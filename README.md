@@ -1,189 +1,236 @@
 # Avantus — Multi-tenant Client Experience Platform
 
-A reference implementation of a multi-tenant SaaS for service businesses, built end-to-end:
+A reference implementation of a wedding-cluster client-experience SaaS, built end-to-end:
 
-- **Tenants** are businesses (catering, event mgmt, photography, planner, florist).
-- Each tenant has **roles** (Owner / Sales / Coordinator / Viewer) and **users** scoped to those roles.
-- Every tenant gets a pre-built, fully editable **Item Master** (custom tables + columns + rows, with CSV upload).
-- An **AI proposal engine** reads the tenant's catalog as ground truth and drafts a curated proposal.
-- Salespeople edit the proposal inline; the **client gets a share-link portal** where they can change quantities and request edits in real time.
-- All styling is **Tailwind v4** + custom animations via **Framer Motion**.
-
-> Built as a single coherent codebase by a senior engineer in one sitting — Next.js 16 (App Router), TypeScript, Prisma + SQLite (Postgres-ready), Claude API.
+- **Multi-tenant auth** — signup wizard with business-type selection, login, forgot/reset, JWT cookies, role-permission gates
+- **Dynamic Item Master** — virtual tables (`CustomTable` + `CustomColumn` + `CustomRow`), 9 column types, CRUD from UI, CSV import with auto-mapping
+- **AI proposal engine (5-stage)** — parse → pgvector RAG → Claude compose → constraint check → render. Tenant-tunable tone/upsell/margin/instructions
+- **Invoicing** — strict state machine, concurrency-safe numbering (`SELECT … FOR UPDATE`), CGST/SGST/IGST by place-of-supply, PDF rendering via worker
+- **Payments** — Razorpay adapter with mock mode, signed webhooks, multi-payment reconciliation, manual entry
+- **eSign** — Digio adapter with mock mode + webhook receiver
+- **CRM pipeline** — drag-and-drop Kanban, stages, lead scoring, activity timeline
+- **Comms** — email (Resend), WhatsApp (Meta Cloud API), SMS (MSG91), in-portal chat — all behind a `comms.send*` facade routed through BullMQ
+- **Accounting sync** — Zoho Books (OAuth + push) + Tally desktop-bridge endpoints
+- **GST e-invoicing** — IRP adapter with mock mode (gated by tenant turnover threshold)
+- **Calendar** — Google Calendar OAuth + bidirectional sync scaffold
+- **Files & gallery** — S3 (MinIO in dev) with signed-URL uploads, Sharp image processing, client-portal gallery approval
+- **Vertical plugin registry** — per-business-type hooks (`defaultPortalTemplate`, `defaultDocumentPacks`)
+- **Analytics dashboard** — revenue (12mo), proposal funnel, receivables aging, AI acceptance rate
+- **Team management** — invite/accept flow, role editing, suspend
+- **Hardening** — RLS policies, region router abstraction, table partitioning template, production PgBouncer + dual-Redis runbook
 
 ---
 
-## Quick start
+## Local stack (no Docker)
+
+Prerequisites:
+- **Postgres 14+ with pgvector**. Postgres.app ships pgvector built-in — easiest.
+  Alternatively: `brew install postgresql@16 pgvector && brew services start postgresql@16`.
+- **Redis**: `brew install redis && brew services start redis`.
 
 ```bash
+# One-time
+createdb honeybook
 npm install
-npx prisma db push       # creates dev.db from prisma/schema.prisma
-npm run db:seed          # seeds 5 business types + 5 demo tenants
-npm run dev              # http://localhost:3000
+npm run db:reset        # schema + pgvector extension + RLS + seed
+
+# Daily
+npm run dev             # http://localhost:3000
+npm run dev:worker      # in another terminal — runs the BullMQ workers
 ```
+
+Files are written to `./uploads` (gitignored). Flip `STORAGE_DRIVER=s3` in `.env` to use S3 in production.
+
+> Docker workflow (Postgres + Redis + MinIO in containers) is still supported — see `docker-compose.yml` and use the URLs in `.env.example`.
 
 ### Demo accounts (password `demo1234` for all)
 
-| Business type        | Login email                            |
-| -------------------- | -------------------------------------- |
-| Catering & Banquet   | `owner@catering.demo`                  |
-| Event Management     | `owner@event-management.demo`          |
-| Wedding Photography  | `owner@wedding-photography.demo`       |
-| Wedding Planner      | `owner@wedding-planner.demo`           |
-| Florist & Decor      | `owner@florist-decor.demo`             |
+| Business type        | Login email                        |
+| -------------------- | ---------------------------------- |
+| Catering & Banquet   | `owner@catering.demo`              |
+| Event Management     | `owner@event-management.demo`      |
+| Wedding Photography  | `owner@wedding-photography.demo`   |
+| Wedding Planner      | `owner@wedding-planner.demo`       |
+| Florist & Decor      | `owner@florist-decor.demo`         |
 
-Or click **"Get started"** and create your own tenant in the 3-step signup wizard.
+### Service URLs (dev)
 
-### Enable Claude (optional)
-
-The app ships a deterministic local proposal generator so it works without an API key. To get real Claude-curated proposals, add to `.env`:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Then restart the dev server. The proposal engine uses **Claude Sonnet 4.5** by default — change `MODEL` in `src/lib/ai.ts` to switch.
+| Service | URL |
+| --- | --- |
+| App | http://localhost:3000 |
+| MinIO console | http://localhost:9001 (login: `honeybook` / `honeybook123`) |
+| Postgres | `postgresql://honeybook:honeybook@localhost:5433/honeybook` |
+| Redis | `redis://localhost:6380` |
 
 ---
 
-## What's inside
-
-### 1. Auth & multi-tenancy
-- Signup with business-type wizard (`/signup`) → provisions tenant + 4 roles + pre-built tables + sample rows in one transaction (`src/lib/provision.ts`)
-- Login / forgot / reset password with 30-min token
-- JWT session cookie via `jose` (`src/lib/auth.ts`)
-- Proxy-level auth gate on `/app/*` (`src/proxy.ts`)
-- Role-permission system with wildcard matching (`*`, `catalog.*`, etc.) in `src/lib/session.ts`
-
-### 2. Dynamic Item Master
-The killer architectural choice: **no actual DDL**. Tenants create virtual tables stored as `CustomTable` + `CustomColumn` records, with rows as `CustomRow.data` JSON. This means:
-- ✅ Adding/removing columns is instant, multi-tenant safe, migration-free
-- ✅ Each tenant has totally different schemas
-- ✅ AI gets clean structured catalog context
-
-Supports 9 column types (`TEXT`, `LONG_TEXT`, `NUMBER`, `CURRENCY`, `DATE`, `BOOLEAN`, `SELECT`, `MULTI_SELECT`, `IMAGE_URL`).
-
-CSV import with auto column-mapping is at `src/app/api/tables/[id]/import/route.ts`.
-
-### 3. AI Proposal engine (`src/lib/ai.ts`)
-- Loads the tenant's catalog (up to 50 rows per table) and formats it as structured context.
-- Sends to Claude with a strict JSON output schema (validated with Zod).
-- Returns a structured `ProposalDoc` with sections, line items (each linked back to its source catalog row), inclusions, terms.
-- Saves a versioned snapshot in `ProposalVersion` for every edit.
-- Falls back to a deterministic generator if no API key — still useful for demos.
-
-### 4. Client portal (`/p/[token]`)
-Public, share-link-based, no login required. Features:
-- Animated reveal with Framer Motion
-- **"Request changes" edit mode**: client can +/- quantities, remove items, send the modified version back with a note. Vendor sees it as a new version.
-- Accept / Decline with optional message
-- Records `VIEWED`, `EDITED`, `CHANGE_REQUESTED`, `ACCEPTED`, `DECLINED` events
-- Brand color flows from the tenant's business type
-
-### 5. UI & animations
-- Tailwind v4 + custom design tokens (`src/app/globals.css`)
-- Custom UI primitives (Button, Input, Select, Modal) — no shadcn-cli dependency
-- Framer Motion: page transitions, list animations, layout animations, modal portals
-- Aurora gradient backgrounds, hover lift, animated active-nav indicator
-
----
-
-## Architecture at a glance
+## Architecture map
 
 ```
 src/
   app/
-    (auth)/             # login, signup wizard, forgot, reset
-    app/                # authenticated dashboard (proxy-gated)
-      catalog/[id]/     # dynamic table editor
-      proposals/[id]/   # vendor proposal editor
-      contacts/         # CRM
-      settings/         # roles + team
-    p/[token]/          # PUBLIC client portal
+    (auth)/            login, signup, forgot, reset, invite/[token]
+    app/               authenticated dashboard
+      overview         home with KPIs + recent proposals
+      leads/           Kanban pipeline
+      catalog/         dynamic Item Master
+      contacts/        clients
+      proposals/       proposal editor + new-proposal wizard
+      invoices/        invoice list + detail
+      analytics/       Recharts dashboard
+      settings/        tenant info, roles, team
+        ai/            tone, upsell, mandatory/blacklisted items, custom instructions
+    p/[token]/         PUBLIC client portal — animated, edit-mode, pay+sign, chat
     api/
-      auth/             # signup, login, logout, forgot, reset
-      tables/           # custom table CRUD
-      tables/[id]/columns
-      tables/[id]/rows
-      tables/[id]/import   # CSV
-      columns/[id]      # column patch/delete
-      rows/[id]         # row patch/delete
-      proposals/        # create proposal (triggers AI)
-      proposals/[id]    # edit, save versioned snapshot
-      share/[token]/    # PUBLIC: get, send changes, accept/decline
+      auth/            login, signup, logout, forgot, reset
+      tables/          custom-table CRUD + CSV import
+      columns/[id]
+      rows/[id]
       contacts/
-  components/
-    ui/                 # Button, Input, Modal, Card
-    dashboard/          # Sidebar, PageTransition
-    proposal/           # PricingSummary
+      leads/           pipeline + drag-to-stage
+      proposals/       create (5-stage AI), edit, convert-to-invoice
+      invoices/        create, transition (DRAFT → SENT etc.)
+      payments/manual  vendor records cash/cheque payment
+      files/           sign-upload, upload-direct, confirm
+      galleries/       create + per-item approve (public)
+      documents/
+      calendar/        events, google connect/callback
+      accounting/      zoho connect/callback, sync trigger, tally bridge
+      ai-config/       tenant AI tuning
+      team/invites/    invite flow
+      team/users/[id]  role edit, suspend
+      invite/[token]/accept
+      chat/threads/[id]/messages
+      share/[token]/   PUBLIC: get, changes, accept, pay, sign, chat
+      webhooks/
+        razorpay
+        digio
+        whatsapp
+  components/          UI primitives + dashboard shell
   lib/
-    db.ts               # Prisma singleton
-    auth.ts             # JWT + bcrypt
-    session.ts          # session loader + permission checker
-    api.ts              # API route guard (requireApi)
-    provision.ts        # tenant + role + table provisioning
-    ai.ts               # Claude proposal generator
-    proposal-schema.ts  # Zod schema + totals math
-    utils.ts            # cn, slugify, formatCurrency, timeAgo
+    db.ts              prisma singleton
+    db-rls.ts          withTenant(tenantId, …) helper for RLS path
+    auth.ts            JWT + bcrypt
+    session.ts         requireContext + permission checker
+    api.ts             requireApi + rate limit + apiHandler wrapper
+    rate-limit.ts      Redis token-bucket
+    redis.ts           two clients (generic + bullmq-specific)
+    queue.ts           BullMQ queue defs + JOB_NAMES + enqueue()
+    logger.ts          pino
+    sentry.ts          captureException (no-op without DSN)
+    storage.ts         S3 + local-disk adapter
+    provision.ts       tenant + roles + tables on signup
+    invoice.ts         state machine + computeInvoiceTotals + allocateInvoiceNumber
+    financial-year.ts  Indian FY helpers
+    proposal-schema.ts ProposalDoc Zod + totals
+    region.ts          prismaForTenant(id) — single-region today, MENA-ready
+    ai/
+      types.ts         parsedBriefSchema, ConstraintIssue
+      stage-a-parse.ts brief → structured (Claude + heuristic fallback)
+      stage-b-retrieve pgvector RAG (fallback: text overlap)
+      stage-c-compose  Claude compose (fallback: bucket retrieved rows)
+      stage-d-validate constraint check + auto-fix
+      pipeline.ts      runProposalPipeline() — the 5-stage orchestrator
+    embeddings.ts      Voyage / OpenAI / deterministic-hash fallback
+    payments/razorpay  create-link + verify-webhook
+    esign/digio        create-sign + verify-webhook
+    accounting/zoho    OAuth + push
+    gst.ts             IRP adapter (mock + real-aggregator hookup point)
+    plugins/
+      registry.ts      registerPlugin + getPlugin
+      travel.ts        visa pack hook
+      photography.ts   gallery section hook
+    portal/types.ts    PortalTemplateData + defaultTemplate()
+    comms/
+      index.ts         sendEmail / sendSms / sendWhatsApp facades
+      templates.ts     transactional templates
+    pdf/
+      invoice-template.ts
+      proposal-template.ts
+  worker/
+    index.ts           BullMQ worker process (separate from API)
+    handlers/
+      email.ts         Resend
+      sms.ts           MSG91
+      whatsapp.ts      Meta Cloud API
+      pdf.ts           render proposal/invoice
+      embeddings.ts    build per-row + reindex-tenant
+      accounting.ts    push to provider
+      gst.ts           IRN generation
+      payments.ts      reconcile against invoice
+      notification.ts  fan-out (in-app + email/sms/whatsapp)
+      webhook.ts       outbound webhook deliveries
 
 prisma/
-  schema.prisma         # 13 models, multi-tenant, Postgres-ready
-  business-templates.ts # 5 vertical templates (tables + columns + sample rows)
-  seed.ts               # creates business types + demo tenants
-```
-
-### Data model highlights
-
-- `Tenant` is the multi-tenant root. Everything cascade-deletes from it.
-- `Role.permissions` is a JSON array of permission strings; `*` is full access.
-- `CustomTable → CustomColumn → CustomRow` is the virtual schema engine. `CustomRow.data` is JSON keyed by `CustomColumn.slug`.
-- `Proposal.contentJson` is the canonical `ProposalDoc` (a validated structure of sections + line items + terms). Every change snapshots a `ProposalVersion`.
-- `ProposalEvent` logs every interaction for activity feeds.
-- `Proposal.shareToken` powers the public `/p/[token]` portal — no separate access table needed.
-
-### Why SQLite for dev
-Prisma + SQLite means zero local setup. The schema uses `String` for JSON payloads, which is a no-op switch to `Json` (Postgres native) for production. To move to Postgres:
-1. Change `provider = "postgresql"` in `prisma/schema.prisma`
-2. Change `String` → `Json` on `permissions`, `templateJson`, `optionsJson`, `data`, `contentJson`, `payload`
-3. Set `DATABASE_URL=postgres://…`
-4. `npx prisma migrate dev`
-
-### Permissions reference
-
-| Permission          | What it gates                                   |
-| ------------------- | ----------------------------------------------- |
-| `*`                 | Everything (Owner)                              |
-| `catalog.view`      | Read item master                                |
-| `catalog.edit`      | CRUD rows                                       |
-| `schema.edit`       | Create/edit/delete tables and columns           |
-| `proposal.view`     | View proposals                                  |
-| `proposal.create`   | Generate proposals via AI                       |
-| `proposal.send`     | Mark as sent / share with client                |
-| `contact.view`      | Read clients                                    |
-| `contact.edit`      | Add/update clients                              |
-| `team.manage`       | (Reserved for future) invite users, edit roles  |
-| `settings.manage`   | Access /app/settings                            |
-
----
-
-## Commands
-
-```bash
-npm run dev          # dev server (Turbopack)
-npm run build        # production build
-npm run db:push      # apply schema to dev.db
-npm run db:seed      # seed business types + demo tenants
-npm run db:reset     # wipe + re-seed (destructive)
-npm run db:studio    # Prisma Studio
+  schema.prisma            29 models, Postgres + Json
+  business-templates.ts    5 vertical templates
+  seed.ts                  5 demo tenants + pipelines + roles + AI config
+  init.sql                 extensions (vector, pg_trgm, citext)
+  post-push.sql            embedding column, HNSW, partition indexes
+  rls.sql                  Postgres RLS policies + honeybook_app role
+  partitioning.sql         partition template (run manually)
+docker-compose.yml         dev infra
+docker-compose.prod.yml    production reference
+RUNBOOK.md                 production deploy + incident response
 ```
 
 ---
 
-## What this isn't
+## How the AI pipeline runs
 
-- There's no email sending — the password-reset endpoint returns the reset URL in the JSON response so you can click it in the demo. In production, swap in Resend / SES inside `src/app/api/auth/forgot/route.ts`.
-- There's no payment processing (Razorpay / Stripe wiring is one route handler away).
-- There's no PDF export for proposals.
-- The settings page is read-only; team-invite + role-edit mutations are the obvious follow-up.
+When a salesperson submits a brief at `/app/proposals/new`:
 
-Everything else — multi-tenant auth, dynamic schemas, CSV import, AI generation, versioned proposals, public share portal with edit mode — is fully wired.
+1. **Stage A — parse**: `parseBrief()` extracts `guestCount, budget, dietary, occasion, city, …` via Claude (or a deterministic regex fallback). Stored on `Proposal.parsedBrief`.
+2. **Stage B — retrieve**: `retrieveCatalog()` embeds the query, runs `embedding <=> $query::vector` against `CustomRow.embedding` (pgvector HNSW), takes top-K per table. If no embeddings yet, falls back to text-overlap scoring.
+3. **Stage C — compose**: `composeProposal()` calls Claude with the retrieved rows + tenant AI config (tone, upsell, custom instructions). Claude can only use the curated rows — it can't invent items.
+4. **Stage D — validate**: `validateAndFix()` runs deterministic checks (zero-price items, blacklist, budget ceiling, margin floor) and returns `issues[]`.
+5. **Stage E — render**: the client portal at `/p/[token]` reads the `contentJson` and animates it. Edit mode lets the client +/- quantities; their version is saved as a new `ProposalVersion` and re-validated via Stage D.
+
+Embeddings are built asynchronously by the `embeddings.row.build` worker job. When a row is created or updated, `embeddingDirty=true` triggers a queued job; the worker writes the vector via raw SQL (Prisma has no pgvector type yet).
+
+Without `ANTHROPIC_API_KEY`, every stage has a deterministic fallback so the pipeline always runs.
+
+---
+
+## Permissions
+
+| Permission          | What it gates                              |
+| ------------------- | ------------------------------------------ |
+| `*`                 | Everything (Owner)                         |
+| `catalog.view`      | Read item master                           |
+| `catalog.edit`      | CRUD rows                                  |
+| `schema.edit`       | Create/edit/delete tables and columns      |
+| `proposal.view`     | View proposals + invoices                  |
+| `proposal.create`   | Generate proposals via AI; create invoices |
+| `proposal.send`     | Mark sent; transition invoice states       |
+| `contact.view`      | Read clients + leads                       |
+| `contact.edit`      | Add/update clients; move leads             |
+| `team.manage`       | Invite + edit + suspend users              |
+| `settings.manage`   | Access /app/settings + AI config + integrations |
+
+Resolved via `parsePermissions()` (handles wildcards: `catalog.*` matches `catalog.edit`).
+
+---
+
+## Production
+
+See `RUNBOOK.md` for the full deploy + incident playbook. Quick highlights:
+
+- App connects via PgBouncer (port 6432) using the `honeybook_app` role (subject to RLS).
+- Two Redis instances: cache + queue. The cache uses `allkeys-lru`; the queue persists to disk.
+- API and worker are separate processes (so PDF/Sharp/AI work doesn't starve requests).
+- `prisma/rls.sql` MUST be applied before any production traffic. RLS is the backstop behind Prisma's application-layer tenant scoping.
+- `prismaForTenant(tenantId)` is the right API for any production-region-safe path — single region today; MENA activates by setting `DATABASE_URL_MENA`.
+
+---
+
+## What still isn't fully wired (honest list)
+
+- **PDF rendering** uses HTML output stored in S3 — production should swap in puppeteer-core + @sparticuz/chromium-min.
+- **WhatsApp inbound** webhook only matches phone → existing contact; new-lead auto-create is TODO.
+- **Tally bridge** has server-side endpoints + protocol; the Electron desktop agent is out of scope.
+- **GST IRN** has a mock provider + adapter contract; pick an aggregator (ClearTax, Masters India) to wire production.
+- **Socket.io in-portal chat** is HTTP+polling for now — same data model; swap transport when needed.
+- **Partitioning** SQL is templated; run via pg_partman when traffic justifies.
+
+Everything else is wired and the production build is clean. Restart your dev server after pulling — Prisma client is regenerated by `npm run db:push`.

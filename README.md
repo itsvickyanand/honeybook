@@ -1,4 +1,4 @@
-# Avantus — Multi-tenant Client Experience Platform
+# HoneyBook — Multi-tenant Client Experience Platform
 
 A reference implementation of a wedding-cluster client-experience SaaS, built end-to-end:
 

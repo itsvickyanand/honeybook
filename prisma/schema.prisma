@@ -114,6 +114,7 @@ model Tenant {
   meetingTypes        MeetingType[]
   availabilityRules   AvailabilityRule[]
   availabilityExceptions AvailabilityException[]
+  proposalTemplates   ProposalTemplate[]
 
   @@index([businessTypeId])
   @@index([region])
@@ -404,6 +405,7 @@ model Proposal {
   clientEmail    String?
   depositPercent Float     @default(0) // 0 = no deposit, 50 = 50% advance required
   contractTemplateId String? // which contract to attach for signature (else tenant default)
+  proposalTemplateId String? // which proposal template shaped this proposal (else tenant default)
   currentVersion Int       @default(1)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -1047,6 +1049,44 @@ model Project {
   @@index([leadId])
   @@index([teamId])
   @@index([ownerId])
+}
+
+// ProposalTemplate — customizable house style for proposals, per business.
+// Drives three layers: boilerplate content (intro/about/inclusions/terms),
+// brand presentation (cover image + accent color), and AI generation hints
+// (tone + house phrases + must-include catalog rows). Multiple per tenant;
+// one is the default.
+model ProposalTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  // Boilerplate content (supports {{merge}} fields)
+  coverHtml         String   // hero/intro block rendered at the top of the proposal
+  aboutHtml         String?  // "about us" block
+  defaultIntro      String?  // free-text intro paragraph the AI may use as a starting point
+  defaultInclusions Json     // string[] — pre-filled into doc.inclusions
+  defaultTerms      Json     // string[] — pre-filled into doc.terms
+  defaultValidityDays   Int  @default(14)
+  defaultDepositPercent Float?
+  // Brand presentation
+  coverImageUrl String?
+  accentColor   String?  // overrides tenant.brandColor when set
+  showLogo      Boolean  @default(true)
+  // AI generation hints
+  toneHint       String   @default("warm") // warm | formal | concise | playful
+  housePhrases   Json     // string[] — phrases the AI is encouraged to weave in
+  alwaysIncludeItems Json? // string[] catalog rowIds the AI should always include
+  // Section recipe (order of blocks in the rendered proposal)
+  sectionOrder Json       // ['cover','about','sections','inclusions','terms','cta']
+  // Bookkeeping
+  isDefault Boolean @default(false)
+  archived  Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 // ContractTemplate — customizable agreement each business writes for itself.

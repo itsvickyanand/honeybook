@@ -1,0 +1,67 @@
+Credentials
+
+  ┌─────────────────────────────┬──────────────────────────────────────────────────┐
+  │           Setting           │                      Value                       │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Integration Key (client ID) │ 88530de9-f31c-4f1d-a759-99c8947941fc             │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Impersonation User ID       │ 0f4000df-f3ba-402b-a530-6faba1c377ce             │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ API Account ID              │ ad2a03ae-86e1-4b2c-b696-8b83dd96094f             │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Base URI                    │ https://demo.docusign.net                        │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ OAuth Host                  │ account-d.docusign.com                           │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ public_url                  │ (empty — falls back to PUBLIC_URL env / default) │
+  ├─────────────────────────────┼──────────────────────────────────────────────────┤
+  │ docusign_return_url         │ (not set)                                        │
+  └─────────────────────────────┴──────────────────────────────────────────────────┘
+
+  Private Key (PEM)
+
+  -----BEGIN RSA PRIVATE KEY-----
+  MIIEowIBAAKCAQEAhh5DZw56YWxTiH+VmfxOa05ABwPiJ+gEYCpXTN7SnkZTSOr5
+  fxcAgKyD3PmA9Ngsf7H8JmclzqTDjq6HxD8K0zmJ/ydIV4xGf0fNt58t7RTbkW+6
+  I6V6KAsJQKgpdyPvD+r/Z2vRJK0YbAfA300WmC2lVHvOaEm5LnaY4bHvpvffzKGV
+  paScDokEcL/gO7jBke1i8tR6q0tHXVgNLQpYJ7J1CYzbbVkjPu8FwWcTqO5nzdtH
+  JQ7X+jiauVSeX2Jfzlg4i8YCFvn74weFNl1MmAwu1aw4IeHY62UbxUsiCcqIIScg
+  NLAkU/Gf7dooHu1RGQCyxyhnq0g4gjXsiHJpTwIDAQABAoIBAAD620rh+Afv3C5i
+  TEFbRBFppB3JAU/W/00v51e4RblX/Id1sWFPKuGbIRLYvytKzGHEdvoAL+5cwCcH
+  OcENJYhEjTBlj5RALKBaccjWgLs7jJ0j6qwUVe+moP3YHLFyUZlVV2ILOh8hT/fe
+  GKJ+Xty5cfyg3kcJyYYVjL69Z5RZ4ZLDt6w+kJzxfLyGp6KnxQRQgYAuZUQ2Vjrj
+  37JtGd2vNFZIpwH4epM0T0pSsXzUhbZ+2EkYUqB0kYaz+dbrtT0aTYDmeNKlCfT+
+  qNPGTjtNE5V3Ypkfxx5tLlFOqq+cFE8gREqfYG593RLFWbO2IXMTmEy9oEDxM+GB
+  ZaRP9TECgYEAwVNBc0y8FwLruUY0c32VQcLYS8RQf8G4MHbU+70jGoi6neMImjd1
+  DJERLZe+A4DhiXD/GjBqZMIpyfnLfPUhtzS7+mqoplyDXDDSsTWlMNmJ4wDfQ33Y
+  qGMJWI5lqlX2iacJvcYuy2G0u2YG7lCOLb+6kHtNzdl7vm1dlfb7Vz8CgYEAsZk1
+  fHQMJiTHE7xKSqCyEKZCi0ZzhgmY6YN11XyqDBqb30PtVRq4lKpdLc+sMaXF1Bso
+  kSRvIrJ5N5vkcNz+uXP8VKdSFB1EIsCURCH5Pbm18yX+BKy+1bbM4pX68hMeQygY
+  4ltvliSaVGAJJit8uWFyqengqbuig4EjSUTH+fECgYBTXPdIJLqmoZfMGL3dXzXR
+  WZezdD/SF1K5c0R8GR7d/j+afZ/kAC308UkbA+fn0tduUM9wF5iJQkCK27Anffy/
+  53l3ji6TLilmw5bW228UFXoj7OhZThby5WHOUfj87nyU9vZ4YtEi2kr41BIBCbOF
+  fruQOdte/H0jrD1CwXG4OQKBgQCJzm1PTajjrCQBb1hiQgEJpEj8U0Vu22GYyJYV
+  eu9kBv2uJ8IwCFTznqJA2uUtfQldhVlcDl5iGQSwHroKzaCl/JbuhQrOasslADPM
+  DmSc/c5uhqttqzFFGdwvcdtQHX+c8q8kbXjPk0VhdUeEI7hbDH9x0vWuHteCnSDp
+  SIK3sQKBgG2gVGcvrJFKeKCp6vdKKYXJXioFIRrDtQyEFMEcMaXUAmFkvswotj5G
+  TvzT17pYi1m6EQQmm6PnXDl8cf822JL33b/AZElZea4hxbysZba9gjbtuOugnT0G
+  MgS6dTCPY2j7mxWVT5bTJ6KLzTICu/IZpqnVeDyGkCJsz/Q0NKOm
+  -----END RSA PRIVATE KEY-----
+
+  For your other project (env-var style)
+
+  DOCUSIGN_INTEGRATION_KEY=88530de9-f31c-4f1d-a759-99c8947941fc
+  DOCUSIGN_USER_ID=0f4000df-f3ba-402b-a530-6faba1c377ce
+  DOCUSIGN_ACCOUNT_ID=ad2a03ae-86e1-4b2c-b696-8b83dd96094f
+  DOCUSIGN_BASE_URI=https://demo.docusign.net
+  DOCUSIGN_OAUTH_HOST=account-d.docusign.com
+  DOCUSIGN_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+
+  Two things to handle in the new project
+
+  1. Consent: Since you're reusing the same integration key + impersonation user, the one-time JWT consent grant
+  should already be in place. If you hit consent_required, open:
+  https://account-d.docusign.com/oauth/auth?response_type=code&scope=signature%20impersonation&client_id=88530de9-f3
+  1c-4f1d-a759-99c8947941fc&redirect_uri=<your-redirect>&prompt=login
+  2. Redirect URI: Add the new project's callback URL to Admin → Apps and Keys → Redirect URIs (exact match,
+  trailing slash matters).

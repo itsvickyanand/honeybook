@@ -12,6 +12,8 @@ const schema = z.object({
   clientName: z.string().min(1).max(120),
   clientEmail: z.string().email().optional().or(z.literal('')).optional(),
   contactId: z.string().optional(),
+  /** Which proposal template shapes this proposal (else tenant default). */
+  proposalTemplateId: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -29,10 +31,11 @@ export async function POST(req: Request) {
     for (const r of dirty) enqueue(JOB_NAMES.EMBEDDINGS_BUILD_ROW, { rowId: r.id });
   }).catch(() => {});
 
-  const { doc, parsedBrief, issues } = await runProposalPipeline({
+  const { doc, parsedBrief, issues, templateId } = await runProposalPipeline({
     tenantId: auth.tenant.id,
     brief: parsed.data.brief,
     clientName: parsed.data.clientName,
+    proposalTemplateId: parsed.data.proposalTemplateId,
   });
   doc.title = parsed.data.title;
   // Single source of truth for tax: seed the proposal's rate from the tenant's
@@ -41,10 +44,10 @@ export async function POST(req: Request) {
   doc.taxRate = auth.tenant.taxRate ?? doc.taxRate;
   const totals = computeTotals(doc);
 
-  // Default a deposit on larger proposals so the client portal offers a
-  // smaller, immediately-payable amount (and big totals stay collectable even
-  // under gateway per-transaction caps). 25% on anything above ₹50k.
-  const defaultDeposit = totals.total > 50000 ? 25 : 0;
+  // Default deposit %: template wins over the legacy heuristic. Falls back to
+  // 25% on totals above ₹50k so big bookings stay collectable under gateway caps.
+  const tpl = await prisma.proposalTemplate.findUnique({ where: { id: templateId } });
+  const defaultDeposit = tpl?.defaultDepositPercent ?? (totals.total > 50000 ? 25 : 0);
 
   // Auto-link to an existing Lead for this contact, if any.
   let leadId: string | undefined;
@@ -74,6 +77,7 @@ export async function POST(req: Request) {
       discount: totals.discount,
       total: totals.total,
       depositPercent: defaultDeposit,
+      proposalTemplateId: templateId,
       status: 'DRAFT',
       currentVersion: 1,
       versions: {

@@ -37,13 +37,32 @@ export function TeamsManager({ users, initialTeams }: { users: UserLite[]; initi
   async function addMember(teamId: string, userId: string) {
     if (!userId) return;
     try {
+      // Preview the cascade so we can ask the right question.
+      const prev = await fetch(`/api/teams/${teamId}/members`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, preview: true }),
+      });
+      const pData = await prev.json();
+      const willAdd = pData.preview?.willAddProjectIds?.length ?? 0;
+
+      let alsoAddToProjects = true;
+      if (willAdd > 0) {
+        alsoAddToProjects = window.confirm(
+          `This team has ${pData.preview.totalProjects} project${pData.preview.totalProjects === 1 ? '' : 's'}. ` +
+          `Add this person to ${willAdd} of them as well?\n\nOK = add to all · Cancel = team only.`
+        );
+      }
+
       const res = await fetch(`/api/teams/${teamId}/members`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId, alsoAddToProjects }),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      const added = data.cascade?.added ?? 0;
+      toast.success(added > 0 ? `Added to team + ${added} project${added === 1 ? '' : 's'}` : 'Added to team');
       router.refresh();
-    } catch { toast.error('Could not add member'); }
+    } catch (e) { toast.error((e as Error).message || 'Could not add member'); }
   }
   async function removeMember(teamId: string, userId: string) {
     try {

@@ -49,7 +49,7 @@ export async function handlePdfRenderProposal(job: Job): Promise<unknown> {
     include: { tenant: true },
   });
   if (!p) throw new Error('Proposal not found');
-  const html = renderProposalHtml(p);
+  const html = await renderProposalHtml(p);
   const file = await pdfToFile(p.tenantId, html, `${p.title}.pdf`);
   await prisma.document.create({
     data: {

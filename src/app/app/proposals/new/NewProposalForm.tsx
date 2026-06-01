@@ -19,12 +19,14 @@ export function NewProposalForm({
   accent,
   catalogTableCount,
   contacts,
+  templates,
   hasAiKey,
 }: {
   businessTypeName: string;
   accent: string;
   catalogTableCount: number;
   contacts: { id: string; fullName: string; email: string | null }[];
+  templates: { id: string; name: string; isDefault: boolean }[];
   hasAiKey: boolean;
 }) {
   const router = useRouter();
@@ -33,6 +35,9 @@ export function NewProposalForm({
   const [clientEmail, setClientEmail] = React.useState('');
   const [contactId, setContactId] = React.useState('');
   const [brief, setBrief] = React.useState('');
+  const [proposalTemplateId, setProposalTemplateId] = React.useState(
+    templates.find((t) => t.isDefault)?.id ?? templates[0]?.id ?? ''
+  );
   const [loading, setLoading] = React.useState(false);
 
   function pickContact(id: string) {
@@ -57,6 +62,7 @@ export function NewProposalForm({
           clientEmail: clientEmail || undefined,
           contactId: contactId || undefined,
           brief,
+          proposalTemplateId: proposalTemplateId || undefined,
         }),
       });
       const data = await res.json();
@@ -108,6 +114,18 @@ export function NewProposalForm({
           )}
 
           <form onSubmit={submit} className="mt-6 space-y-5">
+            {templates.length > 0 && (
+              <Select
+                label="Proposal template"
+                value={proposalTemplateId}
+                onChange={(e) => setProposalTemplateId(e.target.value)}
+                hint="House style: tone, intro, default inclusions/terms, accent color, section recipe."
+              >
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}{t.isDefault ? ' (default)' : ''}</option>
+                ))}
+              </Select>
+            )}
             <div className="grid gap-4 md:grid-cols-2">
               <Input
                 label="Proposal title"

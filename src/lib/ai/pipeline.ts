@@ -13,17 +13,21 @@ import { parseBrief } from './stage-a-parse';
 import { retrieveCatalog } from './stage-b-retrieve';
 import { composeProposal } from './stage-c-compose';
 import { validateAndFix } from './stage-d-validate';
+import { resolveProposalTemplate } from '../proposals';
 
 export interface RunPipelineArgs {
   tenantId: string;
   brief: string;
   clientName: string;
+  /** Which proposal template shapes tone/inclusions/terms (else tenant default). */
+  proposalTemplateId?: string | null;
 }
 
 export interface PipelineResult {
   doc: ProposalDoc;
   parsedBrief: ParsedBrief;
   issues: ConstraintIssue[];
+  templateId: string;
 }
 
 export async function runProposalPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
@@ -41,6 +45,11 @@ export async function runProposalPipeline(args: RunPipelineArgs): Promise<Pipeli
     blacklistedItemSlugs: [],
   };
 
+  // Resolve the chosen proposal template (or the tenant's default). Drives the
+  // AI's tone + house phrases + must-include items, and post-fills empty doc
+  // fields after generation.
+  const template = await resolveProposalTemplate(args.tenantId, args.proposalTemplateId ?? null);
+
   // A — parse
   const parsed = await parseBrief(args.brief);
 
@@ -54,7 +63,17 @@ export async function runProposalPipeline(args: RunPipelineArgs): Promise<Pipeli
     blacklistedSlugs: (cfg.blacklistedItemSlugs as string[] | null) ?? [],
   });
 
-  // C — compose
+  // Build template-aware instruction block (house phrases + must-include catalog rows).
+  const housePhrases = ((template.housePhrases as unknown as string[]) ?? []).filter(Boolean);
+  const mustInclude = ((template.alwaysIncludeItems as unknown as string[]) ?? []).filter(Boolean);
+  const templateInstructions = [
+    template.defaultIntro ? `Opening tone: ${template.defaultIntro}` : '',
+    housePhrases.length ? `Weave in these house phrases naturally: ${housePhrases.map((p) => `"${p}"`).join(', ')}.` : '',
+    mustInclude.length ? `Always include these catalog rows (slugs or ids): ${mustInclude.join(', ')}.` : '',
+    cfg.customInstructions ? `Vendor instructions:\n${cfg.customInstructions}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  // C — compose (template.toneHint takes precedence over the generic tenant tone)
   const doc = await composeProposal({
     brief: args.brief,
     parsed,
@@ -65,9 +84,9 @@ export async function runProposalPipeline(args: RunPipelineArgs): Promise<Pipeli
     currency: tenant.currency,
     taxRate: tenant.taxRate,
     taxLabel: tenant.taxLabel,
-    tone: cfg.tone,
+    tone: template.toneHint || cfg.tone,
     upsellAggressiveness: cfg.upsellAggressiveness,
-    customInstructions: cfg.customInstructions ?? undefined,
+    customInstructions: templateInstructions || undefined,
   });
 
   // D — validate
@@ -79,5 +98,13 @@ export async function runProposalPipeline(args: RunPipelineArgs): Promise<Pipeli
     blacklistedSlugs: (cfg.blacklistedItemSlugs as string[] | null) ?? [],
   });
 
-  return { doc: finalDoc, parsedBrief: parsed, issues };
+  // Post-fill template defaults into empty fields (don't clobber what AI produced).
+  const tplInclusions = (template.defaultInclusions as unknown as string[]) ?? [];
+  const tplTerms = (template.defaultTerms as unknown as string[]) ?? [];
+  if (!finalDoc.inclusions?.length && tplInclusions.length) finalDoc.inclusions = [...tplInclusions];
+  if (!finalDoc.terms?.length && tplTerms.length) finalDoc.terms = [...tplTerms];
+  if (!finalDoc.validityDays) finalDoc.validityDays = template.defaultValidityDays;
+  if (!finalDoc.intro && template.defaultIntro) finalDoc.intro = template.defaultIntro;
+
+  return { doc: finalDoc, parsedBrief: parsed, issues, templateId: template.id };
 }

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { requireApi } from '@/lib/api';
 import { prisma } from '@/lib/db';
 import { parsePermissions, visibleProjectScope, projectInScope } from '@/lib/session';
+import { applyTeamToProject } from '@/lib/teams/cascade';
 
 const PROJECT_STAGES = ['KICKOFF', 'ONBOARDING', 'PLANNING', 'DELIVERY', 'COMPLETED', 'ARCHIVED'] as const;
 
@@ -97,5 +98,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const project = await prisma.project.update({ where: { id }, data });
+
+  // Team change → cascade members on/off this project.
+  if (d.teamId !== undefined && d.teamId !== existing.teamId) {
+    const cascade = await applyTeamToProject(id, d.teamId, existing.teamId ?? null, { actorUserId: auth.user.id })
+      .catch(() => ({ added: 0, removed: 0 }));
+    return NextResponse.json({ project, cascade });
+  }
   return NextResponse.json({ project });
 }

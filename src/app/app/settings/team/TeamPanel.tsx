@@ -98,7 +98,7 @@ export function TeamPanel({
                 animate={{ opacity: 1, y: 0 }}
                 className="flex items-center gap-3 rounded-xl border bg-[var(--color-surface-2)] p-3"
               >
-                <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] text-sm font-semibold">
+                <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] text-sm font-semibold">
                   {u.fullName.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -106,19 +106,20 @@ export function TeamPanel({
                   <div className="text-xs text-[var(--color-muted)] truncate">{u.email}</div>
                 </div>
                 {u.status === 'SUSPENDED' ? (
-                  <span className="chip">Suspended</span>
+                  <span className="chip shrink-0">Suspended</span>
                 ) : (
-                  <Select
-                    value={u.roleId}
-                    onChange={(e) => changeRole(u.id, e.target.value)}
-                    disabled={u.id === currentUserId}
-                    className="max-w-[140px]"
-                  >
-                    {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </Select>
+                  <div className="w-44 shrink-0">
+                    <Select
+                      value={u.roleId}
+                      onChange={(e) => changeRole(u.id, e.target.value)}
+                      disabled={u.id === currentUserId}
+                    >
+                      {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </Select>
+                  </div>
                 )}
                 {u.id !== currentUserId && u.status !== 'SUSPENDED' && (
-                  <button onClick={() => suspend(u.id)} className="btn-ghost p-2 text-red-400" aria-label="Suspend">
+                  <button onClick={() => suspend(u.id)} className="btn-ghost shrink-0 p-2 text-red-400" aria-label="Suspend">
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}

@@ -21,6 +21,8 @@ export interface ParticipantView {
   email: string | null;
   initials: string;
   accessToken: string | null;
+  /** Set when this participant was auto-added by the project's Team cascade. */
+  inheritedFromTeamId: string | null;
 }
 
 export function initialsOf(name?: string | null, email?: string | null): string {
@@ -44,6 +46,7 @@ export function toParticipantView(m: {
   email: string | null;
   name: string | null;
   accessToken: string | null;
+  inheritedFromTeamId?: string | null;
   user?: { fullName: string; email: string } | null;
   contact?: { fullName: string; email: string | null } | null;
 }): ParticipantView {
@@ -65,5 +68,6 @@ export function toParticipantView(m: {
     email,
     initials: initialsOf(name, email),
     accessToken: m.kind === 'COLLABORATOR' ? m.accessToken : null,
+    inheritedFromTeamId: m.inheritedFromTeamId ?? null,
   };
 }

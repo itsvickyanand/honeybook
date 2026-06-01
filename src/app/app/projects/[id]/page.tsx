@@ -170,6 +170,7 @@ export default async function WorkspacePage({
           initial={participantViews}
           users={members}
           contacts={contacts}
+          teamName={teamsList.find((t) => t.id === project.teamId)?.name ?? null}
         />
         <div className="flex flex-wrap items-center gap-2">
           <Link href={`/app/calendar?project=${id}`} className="btn-ghost text-sm"><CalendarDays className="h-4 w-4" /> Schedule</Link>

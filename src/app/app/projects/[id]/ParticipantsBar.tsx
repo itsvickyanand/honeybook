@@ -18,9 +18,10 @@ export interface ParticipantRow {
   email: string | null;
   initials: string;
   accessToken: string | null;
+  inheritedFromTeamId?: string | null;
 }
 
-const KIND_LABEL: Record<string, string> = { TEAM: 'TEAM', COLLABORATOR: 'COLLABORATOR', CONTACT: 'CONTACT' };
+const KIND_LABEL: Record<string, string> = { TEAM: 'TEAMMATE', COLLABORATOR: 'COLLABORATOR', CONTACT: 'CONTACT' };
 const KIND_TONE: Record<string, string> = {
   TEAM: 'bg-[var(--color-primary)]/15 text-[var(--color-primary-soft)]',
   COLLABORATOR: 'bg-amber-500/15 text-amber-500',
@@ -33,12 +34,14 @@ export function ParticipantsBar({
   initial,
   users,
   contacts,
+  teamName,
 }: {
   projectId: string;
   youName: string;
   initial: ParticipantRow[];
   users: { id: string; fullName: string; email: string }[];
   contacts: { id: string; fullName: string; email: string | null }[];
+  teamName?: string | null;
 }) {
   const router = useRouter();
   const [list, setList] = React.useState<ParticipantRow[]>(initial);
@@ -62,6 +65,11 @@ export function ParticipantsBar({
   }
 
   async function remove(id: string) {
+    const target = list.find((x) => x.id === id);
+    if (target?.inheritedFromTeamId) {
+      toast.info(`This person is on the project via team "${teamName ?? 'Team'}". Remove them from the team to drop them here.`);
+      return;
+    }
     setList((p) => p.filter((x) => x.id !== id));
     await fetch(`/api/projects/${projectId}/participants?memberId=${id}`, { method: 'DELETE' }).catch(() => {});
     router.refresh();
@@ -72,14 +80,27 @@ export function ParticipantsBar({
       <div className="text-sm text-[var(--color-muted)]">Visible to you + {list.length} participant{list.length === 1 ? '' : 's'}</div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <Avatar initials={(youName || 'You').slice(0, 1).toUpperCase()} label="You" />
-        {list.map((p) => (
-          <div key={p.id} className="group relative flex items-center gap-2">
-            <Avatar initials={p.initials} label={p.name} sub={KIND_LABEL[p.kind]} tone={KIND_TONE[p.kind]} />
-            <button onClick={() => remove(p.id)} className="absolute -right-1 -top-1 hidden rounded-full bg-[var(--color-surface-2)] p-0.5 text-[var(--color-muted)] group-hover:block" aria-label={`Remove ${p.name}`}>
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
+        {list.map((p) => {
+          const inherited = !!p.inheritedFromTeamId;
+          return (
+            <div key={p.id} className="group relative flex items-center gap-2">
+              <Avatar
+                initials={p.initials}
+                label={p.name}
+                sub={inherited ? `via ${teamName ?? 'Team'}` : KIND_LABEL[p.kind]}
+                tone={KIND_TONE[p.kind]}
+              />
+              <button
+                onClick={() => remove(p.id)}
+                className="absolute -right-1 -top-1 hidden rounded-full bg-[var(--color-surface-2)] p-0.5 text-[var(--color-muted)] group-hover:block"
+                aria-label={`Remove ${p.name}`}
+                title={inherited ? 'Inherited from team — remove from team to drop' : 'Remove'}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          );
+        })}
         <div className="relative">
           <button onClick={() => { setMenu((m) => !m); setMode(null); }} className="flex items-center gap-2 rounded-full border border-dashed border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-muted)] transition hover:border-[var(--color-primary)]/60 hover:text-[var(--color-text)]">
             <Plus className="h-4 w-4" /> Add
@@ -88,7 +109,7 @@ export function ParticipantsBar({
             <div className="absolute z-20 mt-2 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-xl">
               <MenuItem title="Contact" desc="Anyone you offer your services to — an individual or a business." onClick={() => setMode('CONTACT')} />
               <MenuItem title="Collaborator" desc="An individual or business that helps you provide your service." onClick={() => setMode('COLLABORATOR')} />
-              <MenuItem title="Team member" desc="An individual who's part of your company and has account access." onClick={() => setMode('TEAM')} />
+              <MenuItem title="Teammate" desc="An internal user from your business. (Add a Team to the project to bulk-add several people at once.)" onClick={() => setMode('TEAM')} />
             </div>
           )}
           {menu && mode && (

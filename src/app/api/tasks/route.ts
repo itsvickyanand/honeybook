@@ -56,10 +56,13 @@ const createSchema = z.object({
   contactId: z.string().optional(),
   leadId: z.string().optional(),
   assigneeId: z.string().optional(),
+  assigneeMemberId: z.string().optional(), // assign to a project participant
   category: z.enum(['PREP', 'COMMUNICATION', 'DELIVERY', 'ADMIN', 'FOLLOWUP']).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional(),
   dueDate: z.string().datetime().optional(),
   reminderHoursBefore: z.number().int().min(0).max(720).optional(),
+  estimateMinutes: z.number().int().min(0).max(60 * 1000).optional(),
+  actualMinutes: z.number().int().min(0).max(60 * 1000).optional(),
 });
 
 export async function POST(req: Request) {
@@ -67,6 +70,10 @@ export async function POST(req: Request) {
   if ('error' in auth) return auth.error;
   const parsed = createSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input', issues: parsed.error.flatten() }, { status: 400 });
+
+  // Assigning to a participant clears the internal-user assignee and vice versa.
+  const assigneeId = parsed.data.assigneeMemberId ? null : (parsed.data.assigneeId ?? null);
+  const assigneeMemberId = parsed.data.assigneeMemberId ?? null;
 
   const task = await prisma.task.create({
     data: {
@@ -76,13 +83,19 @@ export async function POST(req: Request) {
       projectId: parsed.data.projectId,
       contactId: parsed.data.contactId,
       leadId: parsed.data.leadId,
-      assigneeId: parsed.data.assigneeId,
+      assigneeId,
+      assigneeMemberId,
+      assignedById: (assigneeId || assigneeMemberId) ? auth.user.id : null,
+      assignedAt: (assigneeId || assigneeMemberId) ? new Date() : null,
       category: parsed.data.category ?? 'PREP',
       priority: parsed.data.priority ?? 'MEDIUM',
       status: 'TODO',
       dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : undefined,
       reminderHoursBefore: parsed.data.reminderHoursBefore,
+      estimateMinutes: parsed.data.estimateMinutes,
+      actualMinutes: parsed.data.actualMinutes,
     },
+    include: { project: { select: { id: true, name: true } } },
   });
   return NextResponse.json({ task }, { status: 201 });
 }

@@ -10,7 +10,8 @@ import { notFound } from 'next/navigation';
 import { requireSession, getCurrentContext, visibleProjectScope, projectInScope } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { Card, CardHeader } from '@/components/ui/Card';
-import TaskList, { TaskItem } from '@/components/tasks/TaskList';
+import { type TaskItem, type AssigneeOption } from '@/components/tasks/TaskList';
+import { TasksTab } from './TasksTab';
 import { StageSelect, ProjectActivity, ProjectNotes, TagEditor } from './WorkspaceClient';
 import { TeamTab } from './TeamTab';
 import { ProjectFinancials } from './ProjectFinancials';
@@ -18,6 +19,7 @@ import { ParticipantsBar } from './ParticipantsBar';
 import { ProjectActions } from './ProjectActions';
 import { WorkspaceFiles } from './WorkspaceFiles';
 import { ClientPortalPanel } from './ClientPortalPanel';
+import { ProjectCalendar } from './ProjectCalendar';
 import { toParticipantView } from '@/lib/participants';
 import { ensureProjectStages } from '@/lib/project-stages';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -33,6 +35,7 @@ const TABS = [
   { id: 'activity', label: 'Activity', icon: ActivityIcon },
   { id: 'files', label: 'Files', icon: FileText },
   { id: 'tasks', label: 'Tasks', icon: CheckCircle2 },
+  { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'financials', label: 'Financials', icon: Receipt },
   { id: 'notes', label: 'Notes', icon: StickyNote },
   { id: 'team', label: 'Team', icon: Users },
@@ -235,19 +238,35 @@ export default async function WorkspacePage({
             {tab === 'tasks' && (
               <Card>
                 <CardHeader title="Tasks" description="You and your team see all tasks, while clients and collaborators only see theirs." />
-                <TaskList
+                <TasksTab
                   projectId={id}
-                  grouped
-                  showProject={false}
-                  members={members}
-                  initialTasks={project.tasks.map((t): TaskItem => ({
+                  assignees={participantViews.map((p): AssigneeOption => ({
+                    userId: p.kind === 'TEAM' ? p.userId ?? undefined : undefined,
+                    memberId: p.kind === 'TEAM' ? undefined : p.id,
+                    name: p.name,
+                    email: p.email,
+                    kind: p.kind,
+                    initials: p.initials,
+                  }))}
+                  tasks={project.tasks.map((t): TaskItem => ({
                     id: t.id, title: t.title, description: t.description,
                     status: t.status as TaskItem['status'], category: t.category,
                     priority: t.priority as TaskItem['priority'],
                     dueDate: t.dueDate?.toISOString() ?? null,
-                    assigneeId: t.assigneeId, sortOrder: t.sortOrder, projectId: id,
+                    assigneeId: t.assigneeId,
+                    assigneeMemberId: t.assigneeMemberId,
+                    estimateMinutes: t.estimateMinutes,
+                    actualMinutes: t.actualMinutes,
+                    sortOrder: t.sortOrder, projectId: id,
                   }))}
                 />
+              </Card>
+            )}
+
+            {tab === 'calendar' && (
+              <Card>
+                <CardHeader title="Calendar" description="Meetings, project milestones and tasks for this project." />
+                <ProjectCalendar projectId={id} />
               </Card>
             )}
 

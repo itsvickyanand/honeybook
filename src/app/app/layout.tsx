@@ -13,7 +13,6 @@ const ALL_NAV: NavEntry[] = [
   { href: '/app', label: 'Home', icon: 'Home' },
   { href: '/app/projects', label: 'Projects', icon: 'Kanban', permission: 'proposal.view' },
   { href: '/app/my-work', label: 'My Work', icon: 'Sparkle', permission: 'contact.view' },
-  { href: '/app/tasks', label: 'Tasks', icon: 'Sparkle', permission: 'contact.view' },
   { href: '/app/team', label: 'Team', icon: 'Users', permission: 'team.view' },
   {
     label: 'Lead capture',

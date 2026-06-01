@@ -22,6 +22,8 @@ const patchSchema = z.object({
   assigneeMemberId: z.string().nullable().optional(), // assign to a project participant
   sortOrder: z.number().int().optional(),
   reminderHoursBefore: z.number().int().min(0).max(720).nullable().optional(),
+  estimateMinutes: z.number().int().min(0).max(60 * 1000).nullable().optional(),
+  actualMinutes: z.number().int().min(0).max(60 * 1000).nullable().optional(),
 });
 
 export async function PATCH(

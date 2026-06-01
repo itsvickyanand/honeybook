@@ -14,6 +14,7 @@ export default async function SettingsPage() {
     { href: '/app/settings/teams', title: 'Teams', description: 'Group members into teams, set leads, move people', icon: Users },
     { href: '/app/settings/roles', title: 'Roles & permissions', description: 'Custom roles with per-permission toggles', icon: Shield },
     { href: '/app/settings/contracts', title: 'Contracts', description: 'Write your own agreements with merge fields, set a default', icon: ScrollText },
+    { href: '/app/settings/scheduling', title: 'Scheduling', description: 'Meeting types + weekly availability for client bookings', icon: Building2 },
     { href: '/app/settings/security', title: 'Security', description: 'Two-factor authentication, sessions', icon: Shield },
     { href: '/app/settings/integrations', title: 'Integrations', description: 'Zoho, Google Calendar, Tally, payments, eSign', icon: Plug },
     { href: '/app/settings/whatsapp', title: 'WhatsApp templates', description: 'Manage approved Meta templates', icon: MessageSquare },

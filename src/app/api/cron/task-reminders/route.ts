@@ -46,7 +46,7 @@ export async function GET(req: Request) {
           type: 'task.due-soon',
           title: `Task due soon: ${t.title}`,
           body: t.project ? `${t.project.name} · due ${t.dueDate.toLocaleDateString()}` : undefined,
-          href: t.projectId ? `/app/projects/${t.projectId}?tab=tasks` : '/app/tasks',
+          href: t.projectId ? `/app/projects/${t.projectId}?tab=tasks` : '/app/my-work',
         },
       });
       await prisma.task.update({ where: { id: t.id }, data: { reminderSentAt: now } });

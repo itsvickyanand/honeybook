@@ -111,6 +111,9 @@ model Tenant {
   teams               Team[]
   projectStages       ProjectStage[]
   contractTemplates   ContractTemplate[]
+  meetingTypes        MeetingType[]
+  availabilityRules   AvailabilityRule[]
+  availabilityExceptions AvailabilityException[]
 
   @@index([businessTypeId])
   @@index([region])
@@ -170,6 +173,10 @@ model User {
   ownedProjects Project[]      @relation("ProjectOwner")
   assignedTasks Task[]         @relation("TaskAssignee")
   ledTeams     Team[]          @relation("TeamLead")
+  hostedEvents CalendarEvent[] @relation("EventHost")
+  hostedMeetingTypes MeetingType[] @relation("MeetingTypeHost")
+  availabilityRules AvailabilityRule[]
+  availabilityExceptions AvailabilityException[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -283,6 +290,7 @@ model Contact {
   projects   Project[]
   dripEnrollments DripEnrollment[]
   projectMemberships ProjectMember[]
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId])
 }
@@ -336,6 +344,7 @@ model Lead {
   activities Activity[]
   proposals  Proposal[]
   projects   Project[]
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId])
   @@index([stageId])
@@ -728,14 +737,101 @@ model CalendarEvent {
   endAt       DateTime
   allDay      Boolean  @default(false)
   location    String?
-  type        String   @default("BLOCKED") // BLOCKED | BOOKING | INTERNAL
-  externalId  String? // google calendar event id
+  // 'type' (legacy): BLOCKED | BOOKING | INTERNAL. Prefer `kind` going forward.
+  type        String   @default("BLOCKED")
+  // What this event represents (drives calendar layers + visuals)
+  kind        String   @default("MEETING") // MEETING | PROJECT_MILESTONE | EXTERNAL | BLOCKED
+  status      String   @default("CONFIRMED") // PROPOSED | CONFIRMED | DECLINED | CANCELLED | COMPLETED
+  // Host (who's running this meeting)
+  hostUserId  String?
+  hostUser    User?    @relation("EventHost", fields: [hostUserId], references: [id])
+  // Source links
+  meetingTypeId String?
+  meetingType   MeetingType? @relation(fields: [meetingTypeId], references: [id])
+  contactId   String?
+  contact     Contact? @relation(fields: [contactId], references: [id])
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  // Booking reschedule/cancel link
+  bookingToken String?
+  videoUrl    String?
+  // External calendar mirror
+  externalProvider String?  // google | outlook
+  externalId  String? // google calendar event id (kept for back-compat)
   meta        Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([tenantId])
   @@index([tenantId, startAt])
+  @@index([projectId])
+  @@index([contactId])
+  @@index([hostUserId])
+  @@index([bookingToken])
+}
+
+// MeetingType — bookable session profiles (Calendly-style). One booking page each.
+model MeetingType {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  slug            String   // public URL identifier
+  description     String?
+  durationMins    Int      @default(30)
+  bufferMins      Int      @default(0)   // gap after the meeting
+  locationType    String   @default("GOOGLE_MEET") // IN_PERSON | GOOGLE_MEET | ZOOM | PHONE | CUSTOM
+  locationDetail  String?  // address / phone / custom link
+  color           String   @default("#8b5cf6")
+  advanceNoticeHours Int   @default(2)
+  maxBookingDays  Int      @default(30)
+  hostUserId      String?
+  hostUser        User?    @relation("MeetingTypeHost", fields: [hostUserId], references: [id])
+  active          Boolean  @default(true)
+  archived        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  events CalendarEvent[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([hostUserId])
+}
+
+// AvailabilityRule — weekly recurring hours per user (Mon-Fri 10:00-19:00, etc.)
+model AvailabilityRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayOfWeek Int      // 0 = Sun … 6 = Sat
+  startTime String   // "10:00" 24h
+  endTime   String   // "19:00"
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, userId])
+}
+
+// AvailabilityException — a specific date override (off / custom hours).
+model AvailabilityException {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime // date-only (UTC midnight)
+  blocked   Boolean  @default(true)  // true = whole day off
+  startTime String?  // custom hours when blocked=false
+  endTime   String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, userId, date])
+  @@index([tenantId, userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -943,6 +1039,7 @@ model Project {
   tasks            Task[]
   paymentSchedules PaymentSchedule[]
   activities       Activity[]
+  calendarEvents   CalendarEvent[]
 
   @@index([tenantId])
   @@index([tenantId, stage])
@@ -1092,6 +1189,9 @@ model Task {
   // remind X hours before due (creates a Notification)
   reminderHoursBefore Int?
   reminderSentAt DateTime?
+  // Time allocation (manual entry for now; live timer is a follow-up)
+  estimateMinutes Int?
+  actualMinutes   Int?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1200,9 +1300,12 @@ model PlatformAuditLog {
 // ─────────────────────────────────────────────────────────────────────────────
 model Integration {
   id            String   @id @default(cuid())
-  scope         String   // 'platform' | 'tenant'
+  scope         String   // 'platform' | 'tenant' | 'user'
   tenantId      String?
   tenant        Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Per-user OAuth integrations (e.g. each user connects their own Google Calendar).
+  // Nullable so tenant/platform-scoped rows keep working unchanged.
+  userId        String?
   provider      String   // razorpay | resend | msg91 | whatsapp_bsp | google_calendar | calendly | zoom | digio | zoho_books | tally | gst_irp | sentry | anthropic | voyage | openai | gmail | cloudflare_r2 | redis_cloud
   status        String   @default("DISCONNECTED") // CONNECTED | DISCONNECTED | ERROR | PENDING
   displayName   String?  // user-set label e.g. "Personal Gmail"
@@ -1220,6 +1323,7 @@ model Integration {
 
   @@unique([scope, tenantId, provider])
   @@index([provider, status])
+  @@index([userId, provider])
 }
 
 
@@ -1345,6 +1449,10 @@ model ProjectMember {
   name      String?
   accessToken String? // magic-link token for the scoped collaborator portal (random; looked up via findFirst)
   role      String   @default("COLLABORATOR") // OWNER | TEAM | COLLABORATOR | CLIENT | VIEWER
+  // Cascade tracking — set when this row was created by the Team→Project cascade.
+  // Tells auto-added members from explicit ad-hoc adds and supports reversible backfill.
+  inheritedFromTeamId String?
+  createdById         String?
   createdAt DateTime @default(now())
 
   assignedTasks Task[] @relation("TaskAssigneeMember")
@@ -1354,4 +1462,5 @@ model ProjectMember {
   @@index([contactId])
   @@index([projectId])
   @@index([accessToken])
+  @@index([inheritedFromTeamId])
 }

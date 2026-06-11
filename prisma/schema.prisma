@@ -1504,3 +1504,67 @@ model ProjectMember {
   @@index([accessToken])
   @@index([inheritedFromTeamId])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL LOG — outbound Twilio dialer (portable calling module, see src/dialer)
+//
+// One row per call placed through the dialer. Populated incrementally: created
+// when the call starts (voice webhook), updated by Twilio status/recording
+// webhooks, then enriched with transcript + Claude analysis when the call ends.
+//
+// tenantId/contactId are stored as plain (un-related) ids so the dialer module
+// stays decoupled from the rest of the schema — it only ever reads/writes this
+// one table. Reads are scoped by tenantId server-side. The generic
+// leadId/leadName/leadCompany fields are the module's native association API and
+// mirror contactId/name when a call originates from a Client.
+// ─────────────────────────────────────────────────────────────────────────────
+model CallLog {
+  id      String @id @default(cuid())
+  callSid String @unique // Twilio Call SID (CAxxxx)
+
+  // Scoping + association (passed from the client at dial time).
+  tenantId    String?
+  contactId   String?
+  leadId      String? // module-native id (mirrors contactId for Client calls)
+  leadName    String?
+  leadCompany String?
+
+  // Call metadata.
+  fromNumber  String?
+  toNumber    String?
+  direction   String    @default("outbound")
+  status      String    @default("initiated") // initiated|ringing|in-progress|completed|busy|no-answer|failed|canceled
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  durationSec Int?
+
+  // Recording (Twilio).
+  recordingSid String?
+  recordingUrl String? // Twilio .mp3 media URL (auth required to fetch)
+
+  // Transcript (Twilio Voice Intelligence).
+  transcriptSid String?
+  transcript    String?
+
+  // AI analysis (Claude / Anthropic).
+  summary        String?
+  sentiment      String? // positive|neutral|negative|mixed
+  sentimentScore Float? // -1.0 .. 1.0
+  keyPoints      Json? // string[]
+  actionItems    Json? // string[]
+  analysis       Json? // full structured analysis returned by Claude
+  analyzedAt     DateTime?
+
+  // Pipeline bookkeeping.
+  processingState String  @default("pending") // pending|transcribing|analyzing|done|error
+  errorMessage    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([leadId])
+  @@index([toNumber])
+  @@index([createdAt])
+}

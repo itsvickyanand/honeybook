@@ -5,6 +5,7 @@ import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
 import { SendMessageMenu } from '@/components/ui/SendMessageMenu';
+import { ContactCallActions } from './ContactCallActions';
 import { formatCurrency, timeAgo } from '@/lib/utils';
 
 export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -66,7 +67,13 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               </div>
             </div>
           </div>
-          <div className="mt-4 pt-4 border-t flex justify-end">
+          <div className="mt-4 pt-4 border-t flex flex-wrap justify-end gap-2">
+            <ContactCallActions
+              contactId={contact.id}
+              name={contact.fullName}
+              phone={contact.phone}
+              company={contact.company}
+            />
             <SendMessageMenu
               ctx={{
                 contactName: contact.fullName,

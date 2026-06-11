@@ -3,6 +3,7 @@ import { hasPermission } from '@/lib/session';
 import { Sidebar, NavEntry } from '@/components/dashboard/Sidebar';
 import { TestModeBanner } from '@/components/dashboard/TestModeBanner';
 import { Topbar } from '@/components/dashboard/Topbar';
+import { CallProvider } from '@/components/calling';
 import { mockedList } from '@/lib/feature-flags';
 
 // Sidebar IA — mirrors the HoneyBook layout (Setup → Home → Projects →
@@ -63,18 +64,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const mocked = mockedList();
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar
-        tenant={{ name: ctx.tenant.name, businessType: ctx.tenant.businessType }}
-        user={{ fullName: ctx.user.fullName, email: ctx.user.email }}
-        role={{ name: ctx.role.name }}
-        nav={nav}
-      />
-      <main className="flex-1 min-w-0">
-        <TestModeBanner mocked={mocked} />
-        <Topbar />
-        {children}
-      </main>
-    </div>
+    <CallProvider tenantId={ctx.tenant.id}>
+      <div className="flex min-h-screen">
+        <Sidebar
+          tenant={{ name: ctx.tenant.name, businessType: ctx.tenant.businessType }}
+          user={{ fullName: ctx.user.fullName, email: ctx.user.email }}
+          role={{ name: ctx.role.name }}
+          nav={nav}
+        />
+        <main className="flex-1 min-w-0">
+          <TestModeBanner mocked={mocked} />
+          <Topbar />
+          {children}
+        </main>
+      </div>
+    </CallProvider>
   );
 }

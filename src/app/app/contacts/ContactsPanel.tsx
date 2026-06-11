@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { CallButton } from '@/components/calling';
 import Link from 'next/link';
 
 interface Contact {
@@ -105,6 +106,14 @@ export function ContactsPanel({
                       <div className="text-xs text-[var(--color-muted)]">{c.company}</div>
                     )}
                   </div>
+                  {c.phone && (
+                    <CallButton
+                      phone={c.phone}
+                      name={c.fullName}
+                      company={c.company ?? undefined}
+                      contactId={c.id}
+                    />
+                  )}
                 </div>
                 <div className="mt-4 space-y-1.5 text-sm text-[var(--color-muted)]">
                   {c.email && (

@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 
@@ -16,6 +17,9 @@ export function Modal({
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
 }) {
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -25,7 +29,12 @@ export function Modal({
 
   const widths = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-w-5xl' };
 
-  return (
+  if (!mounted) return null;
+
+  // Portal to <body> so the fixed overlay escapes any ancestor with a
+  // `transform` (e.g. framer-motion page transitions), which would otherwise
+  // become the containing block and trap the modal inside the page flow.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -58,6 +67,7 @@ export function Modal({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

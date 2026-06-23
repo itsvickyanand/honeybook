@@ -52,7 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           documentBase64: '', // PDF is rendered async by the worker; Digio link flow doesn't block on it in mock
           filename: `${p.title}-agreement.pdf`,
           redirectUrl: `${process.env.APP_URL ?? new URL(req.url).origin}/p/${token}?signed=1`,
-        });
+        }, p.tenantId);
         await prisma.signatureRequest.create({
           data: {
             tenantId: p.tenantId,

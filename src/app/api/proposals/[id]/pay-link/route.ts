@@ -114,8 +114,8 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     reference: `${payment.id}-${Date.now()}`,
     customer: { name: proposal.clientName ?? 'Client', email: proposal.clientEmail ?? undefined },
     callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${proposal.shareToken}?paid=1`,
-    notes: { reference_id: payment.id, proposalId: proposal.id, invoiceId: invoice.id },
-  });
+    notes: { reference_id: payment.id, proposalId: proposal.id, invoiceId: invoice.id, tenantId: proposal.tenantId },
+  }, proposal.tenantId);
 
   await prisma.payment.update({ where: { id: payment.id }, data: { providerOrderId: link.providerOrderId } });
 

@@ -188,8 +188,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${token}?paid=1`,
       // notes.reference_id lets the `payment.captured` event path (which only
       // carries the payment entity) resolve our Payment row.
-      notes: { reference_id: payment.id, proposalId: p.id, invoiceId: invoice.id },
-    });
+      notes: { reference_id: payment.id, proposalId: p.id, invoiceId: invoice.id, tenantId: p.tenantId },
+    }, p.tenantId);
   } catch (e) {
     // Surface a clean message from the gateway rather than a 500.
     const raw = (e as Error).message || 'Payment gateway error';

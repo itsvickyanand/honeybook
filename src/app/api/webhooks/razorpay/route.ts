@@ -20,7 +20,7 @@
  */
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { verifyWebhookSignature } from '@/lib/payments/razorpay';
+import { verifyWebhookSignature, resolveWebhookSecret } from '@/lib/payments/razorpay';
 import { reconcilePayment } from '@/lib/payments/reconcile';
 import { enqueue, JOB_NAMES } from '@/lib/queue';
 import { logger } from '@/lib/logger';
@@ -44,15 +44,27 @@ interface RzpBody {
 export async function POST(req: Request) {
   const raw = await req.text();
   const sig = req.headers.get('x-razorpay-signature') ?? '';
-  if (!verifyWebhookSignature(raw, sig)) {
-    return NextResponse.json({ error: 'bad signature' }, { status: 401 });
-  }
 
+  // Parse the body BEFORE verifying so we can find the tenant — the webhook
+  // secret is per-tenant when BYO credentials are in use. We re-verify after
+  // parsing using the resolved secret.
   let body: RzpBody;
   try {
     body = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: 'bad json' }, { status: 400 });
+  }
+
+  // Pull tenantId out of the payment/payment_link notes (we set it during create).
+  const notes =
+    body.payload?.payment?.entity?.notes ??
+    body.payload?.payment_link?.entity?.notes ??
+    {};
+  const tenantIdFromNotes = typeof notes.tenantId === 'string' ? notes.tenantId : undefined;
+  const tenantSecret = await resolveWebhookSecret(tenantIdFromNotes);
+
+  if (!verifyWebhookSignature(raw, sig, tenantSecret)) {
+    return NextResponse.json({ error: 'bad signature' }, { status: 401 });
   }
 
   const paymentEnt = body.payload?.payment?.entity;

@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { ProposalDoc } from '@/lib/proposal-schema';
+import { ProposalDoc, computeTotals } from '@/lib/proposal-schema';
 import { ClientPortal } from './ClientPortal';
 import { defaultTemplate, PortalTemplateData, SectionConfig, Theme } from '@/lib/portal/types';
+import { parseBlocks } from '@/lib/proposals/blocks';
+import { getStorage } from '@/lib/storage';
+import { formatCurrency } from '@/lib/utils';
 
 export default async function PublicProposalPage({
   params,
@@ -40,7 +43,7 @@ export default async function PublicProposalPage({
   const doc = p.contentJson as unknown as ProposalDoc;
 
   // Load supporting data the dynamic sections might need
-  const [galleries, documents] = await Promise.all([
+  const [galleries, documents, proposalTemplate, paymentSchedule] = await Promise.all([
     prisma.gallery.findMany({
       where: { tenantId: p.tenantId, OR: [{ proposalId: p.id }, { visibility: 'CLIENT' }] },
       include: { items: { include: { file: true }, orderBy: { sortOrder: 'asc' } } },
@@ -49,7 +52,58 @@ export default async function PublicProposalPage({
     prisma.document.findMany({
       where: { tenantId: p.tenantId, OR: [{ proposalId: p.id }, { meta: { path: ['template'], equals: true } }] },
     }),
+    // Resolve the proposal's chosen template (or the tenant default). Used for
+    // the new block-builder render path.
+    p.proposalTemplateId
+      ? prisma.proposalTemplate.findUnique({ where: { id: p.proposalTemplateId } })
+      : prisma.proposalTemplate.findFirst({ where: { tenantId: p.tenantId, isDefault: true, archived: false } }),
+    // Payment schedule rows so the payment-schedule block has real data when
+    // a project already exists.
+    p.projectId
+      ? prisma.paymentSchedule.findFirst({
+          where: { projectId: p.projectId, tenantId: p.tenantId },
+          include: { items: { orderBy: { dueDate: 'asc' } } },
+        })
+      : null,
   ]);
+
+  // Parse the template's blocks JSON. If absent/invalid, ClientPortal falls
+  // back to its legacy React layout — zero breakage for templates that haven't
+  // been opened in the new builder yet.
+  const templateBlocks = parseBlocks(proposalTemplate?.blocks);
+
+  // Pre-compute totals + format currency once on the server — keeps the block
+  // renderer pure on the client side.
+  const totals = computeTotals(doc);
+  const fmt = (n: number) => formatCurrency(n, p.tenant.currency, p.tenant.locale);
+  const renderTotals = {
+    subTotal: fmt(totals.subtotal),
+    discount: fmt(totals.discount),
+    tax: fmt(totals.taxAmount),
+    total: fmt(totals.total),
+    taxLabel: doc.taxLabel ?? p.tenant.taxLabel ?? 'GST',
+    taxRate: doc.taxRate ?? 18,
+  };
+
+  // Resolve gallery thumbnail URLs (presigned R2 GETs) so the block renderer
+  // can embed them directly. We do at most 3 galleries × 6 items = 18 lookups,
+  // bounded.
+  const storage = getStorage();
+  const galleryThumbsResolved = await Promise.all(
+    galleries.map(async (g) => ({
+      id: g.id,
+      title: g.title,
+      thumbnailUrls: await Promise.all(
+        g.items.slice(0, 6).map((it) => storage.publicUrl(it.file.storageKey)),
+      ),
+    })),
+  );
+
+  const paymentScheduleRows = paymentSchedule?.items?.map((it) => ({
+    label: it.label,
+    dueDate: it.dueDate ? it.dueDate.toISOString().slice(0, 10) : null,
+    amount: fmt(it.amount),
+  })) ?? [];
 
   return (
     <ClientPortal
@@ -83,6 +137,16 @@ export default async function PublicProposalPage({
         status: d.status,
         isTemplate: !!(d.meta as { template?: boolean } | null)?.template,
       }))}
+      templateBlocks={templateBlocks}
+      blockRenderData={{
+        accentColor: proposalTemplate?.accentColor ?? p.tenant.brandColor ?? p.tenant.businessType.accentColor,
+        vendorLogoUrl: p.tenant.logoUrl ?? null,
+        totals: renderTotals,
+        galleries: galleryThumbsResolved,
+        paymentSchedule: paymentScheduleRows,
+        defaultDepositPercent: proposalTemplate?.defaultDepositPercent ?? p.depositPercent ?? null,
+        appUrl: process.env.APP_URL ?? '',
+      }}
     />
   );
 }

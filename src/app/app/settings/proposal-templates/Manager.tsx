@@ -1,10 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Plus, Star, Trash2, Save, Eye } from 'lucide-react';
+import { Plus, Star, Trash2, Save, Eye, LayoutGrid, ArrowRight } from 'lucide-react';
 import { MERGE_FIELDS, renderTemplate, type ProposalVars } from '@/lib/proposals/render';
+import { STARTER_TEMPLATES } from '@/lib/proposals/starter-templates';
 
 const TONES = ['warm', 'formal', 'concise', 'playful'] as const;
 const SECTION_KEYS = ['cover', 'about', 'sections', 'inclusions', 'terms', 'cta'] as const;
@@ -39,16 +41,19 @@ export function Manager({ initial }: { initial: T[] }) {
   const active = list.find((t) => t.id === activeId) ?? null;
   const [tab, setTab] = React.useState<'content' | 'design' | 'ai' | 'sections'>('content');
   const [preview, setPreview] = React.useState(false);
+  const [starterOpen, setStarterOpen] = React.useState(false);
 
-  async function create() {
+  async function createFromStarter(starterKey: 'classic' | 'visual' | 'one-pager' | 'blank') {
+    const starter = STARTER_TEMPLATES.find((s) => s.key === starterKey);
     const res = await fetch('/api/proposal-templates', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'New template' }),
+      body: JSON.stringify({ name: starter?.name ?? 'New template', starter: starterKey }),
     });
     const data = await res.json();
     if (!res.ok) return toast.error(data.error ?? 'Failed');
-    setList((p) => [...p, data.template]);
-    setActiveId(data.template.id);
+    setStarterOpen(false);
+    // Drop the vendor straight into the visual builder — that's the whole point.
+    router.push(`/app/settings/proposal-templates/${data.template.id}/builder`);
   }
 
   async function patch(patch: Partial<T>) {
@@ -87,7 +92,7 @@ export function Manager({ initial }: { initial: T[] }) {
             {t.isDefault && <Star className="h-3.5 w-3.5 text-amber-500" />}
           </button>
         ))}
-        <button onClick={create} className="btn-ghost w-full justify-center text-sm"><Plus className="h-4 w-4" /> New template</button>
+        <button onClick={() => setStarterOpen(true)} className="btn-primary w-full justify-center text-sm"><Plus className="h-4 w-4" /> New template</button>
       </aside>
 
       {active ? (
@@ -95,6 +100,9 @@ export function Manager({ initial }: { initial: T[] }) {
           <div className="flex items-center justify-between gap-2">
             <input value={active.name} onChange={(e) => patch({ name: e.target.value })} className="input-base text-lg font-semibold" />
             <div className="flex shrink-0 items-center gap-2">
+              <Link href={`/app/settings/proposal-templates/${active.id}/builder`} className="btn-primary text-sm">
+                <LayoutGrid className="h-4 w-4" /> Open builder
+              </Link>
               <button onClick={() => setPreview((p) => !p)} className="btn-ghost text-sm"><Eye className="h-4 w-4" /> {preview ? 'Edit' : 'Preview'}</button>
               {!active.isDefault && <button onClick={makeDefault} className="btn-ghost text-sm"><Star className="h-4 w-4" /> Set default</button>}
               <button onClick={() => remove(active.id)} className="btn-ghost text-sm text-red-400"><Trash2 className="h-4 w-4" /></button>
@@ -124,6 +132,52 @@ export function Manager({ initial }: { initial: T[] }) {
       ) : (
         <div className="card p-8 text-center text-[var(--color-muted)]">Create a template to get started.</div>
       )}
+
+      {starterOpen && <StarterPickerModal onClose={() => setStarterOpen(false)} onPick={createFromStarter} />}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+function StarterPickerModal({
+  onClose, onPick,
+}: { onClose: () => void; onPick: (k: 'classic' | 'visual' | 'one-pager' | 'blank') => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="card max-h-[88vh] w-full max-w-3xl overflow-y-auto p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold">Start from a template</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">Pick a shape that matches how you sell. You can edit every block afterward.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {STARTER_TEMPLATES.map((s) => (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => onPick(s.key)}
+              className="group flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 text-left transition hover:border-[var(--color-primary)]/60"
+            >
+              <div className="flex items-start justify-between">
+                <div className="font-semibold">{s.name}</div>
+                <ArrowRight className="h-4 w-4 text-[var(--color-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--color-primary-soft)]" />
+              </div>
+              <p className="mt-1.5 text-xs text-[var(--color-muted)]">{s.description}</p>
+              <p className="mt-3 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">Good for</p>
+              <p className="text-xs">{s.goodFor}</p>
+              {s.blocks && s.blocks.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {s.blocks.map((b, i) => (
+                    <span key={i} className="chip text-[10px]">{b.type.replace('-', ' ')}</span>
+                  ))}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

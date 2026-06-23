@@ -3,6 +3,9 @@
  *   - 'digio'    → Aadhaar eSign (India)
  *   - 'docusign' → DocuSign envelope
  *   - mock fallback when the chosen provider isn't configured.
+ *
+ * Every call now accepts an optional tenantId so adapters can resolve per-tenant
+ * credentials before falling back to platform demo mode.
  */
 import { createSignRequest, downloadDigioSigned, digioConfigured } from './digio';
 import { createDocusignEnvelope, downloadDocusignSigned, docusignConfigured } from './docusign';
@@ -29,7 +32,7 @@ export function providerConfigured(p: SignProvider): boolean {
   return p === 'docusign' ? docusignConfigured() : digioConfigured();
 }
 
-export async function createSignature(args: CreateSignatureArgs): Promise<CreateSignatureResult> {
+export async function createSignature(args: CreateSignatureArgs, tenantId?: string): Promise<CreateSignatureResult> {
   if (args.provider === 'docusign') {
     const r = await createDocusignEnvelope({
       signerName: args.signerName,
@@ -37,7 +40,7 @@ export async function createSignature(args: CreateSignatureArgs): Promise<Create
       documentBase64: args.pdfBase64,
       filename: args.filename,
       returnUrl: args.returnUrl,
-    });
+    }, tenantId);
     return { ...r, provider: 'docusign' };
   }
   const r = await createSignRequest({
@@ -47,11 +50,11 @@ export async function createSignature(args: CreateSignatureArgs): Promise<Create
     documentBase64: args.pdfBase64,
     filename: args.filename,
     redirectUrl: args.returnUrl,
-  });
+  }, tenantId);
   return { ...r, provider: 'digio' };
 }
 
-export async function downloadSigned(provider: string, externalId: string): Promise<Buffer | null> {
-  if (provider === 'docusign') return downloadDocusignSigned(externalId);
-  return downloadDigioSigned(externalId);
+export async function downloadSigned(provider: string, externalId: string, tenantId?: string): Promise<Buffer | null> {
+  if (provider === 'docusign') return downloadDocusignSigned(externalId, tenantId);
+  return downloadDigioSigned(externalId, tenantId);
 }

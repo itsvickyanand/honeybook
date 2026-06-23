@@ -14,11 +14,17 @@ export async function storeSignedContract(
   signatureRequestId: string,
   pdf: Buffer,
   filename: string
-): Promise<{ fileId: string } | null> {
+): Promise<{ fileId: string; documentId: string | null } | null> {
   const sig = await prisma.signatureRequest.findUnique({ where: { id: signatureRequestId } });
   if (!sig) return null;
   if (sig.signedFileId) {
-    return { fileId: sig.signedFileId }; // idempotent
+    // Idempotent — find the document row created on the previous run so the
+    // caller can still trigger a download.
+    const existingDoc = await prisma.document.findFirst({
+      where: { tenantId: sig.tenantId, fileId: sig.signedFileId },
+      select: { id: true },
+    });
+    return { fileId: sig.signedFileId, documentId: existingDoc?.id ?? null };
   }
 
   // Resolve the project this contract belongs to (via the proposal).
@@ -50,7 +56,7 @@ export async function storeSignedContract(
   });
 
   // File it into the project (shared with client so they can download it too).
-  await prisma.document.create({
+  const document = await prisma.document.create({
     data: {
       tenantId: sig.tenantId,
       projectId: projectId ?? undefined,
@@ -61,8 +67,11 @@ export async function storeSignedContract(
       status: 'APPROVED',
       sharedWithClient: true,
     },
-  }).catch((e) => logger.warn({ err: (e as Error).message }, 'signed-contract.document.failed'));
+  }).catch((e) => {
+    logger.warn({ err: (e as Error).message }, 'signed-contract.document.failed');
+    return null;
+  });
 
-  logger.info({ signatureRequestId, fileId: file.id, projectId }, 'signed-contract.stored');
-  return { fileId: file.id };
+  logger.info({ signatureRequestId, fileId: file.id, documentId: document?.id, projectId }, 'signed-contract.stored');
+  return { fileId: file.id, documentId: document?.id ?? null };
 }

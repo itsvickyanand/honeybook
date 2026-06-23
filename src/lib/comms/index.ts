@@ -10,17 +10,21 @@ export interface SendEmailArgs {
   html?: string;
   text?: string;
   from?: string;
+  /** Tenant the message originates from — drives per-tenant Resend creds + domain. */
+  tenantId?: string;
 }
 export interface SendSmsArgs {
   to: string;
   body: string;
   senderId?: string;
+  tenantId?: string;
 }
 export interface SendWhatsAppArgs {
   to: string;
   type: 'template' | 'text';
   template?: { name: string; languageCode: string; components?: unknown[] };
   body?: string;
+  tenantId?: string;
 }
 
 export async function sendEmail(args: SendEmailArgs) {

@@ -7,6 +7,46 @@
  */
 import crypto from 'crypto';
 import { logger } from '../logger';
+import { resolveIntegration } from '../integrations/resolve';
+
+interface RpConfig {
+  keyId?: string;
+  keySecret?: string;
+  webhookSecret?: string;
+  source: 'tenant' | 'platform' | 'env' | 'none';
+}
+
+/**
+ * Per-tenant credential resolution.
+ *
+ * If a tenantId is passed AND the tenant has CONNECTED Razorpay creds, we use
+ * those — money flows directly into the vendor's merchant account. Otherwise
+ * we fall back to the platform env vars (demo mode), where all funds land in
+ * Avantus's merchant and would require manual settlement.
+ *
+ * NOTE: BYO is v1. The "real" multi-vendor architecture is Razorpay Route
+ * (sub-accounts under one platform merchant); that requires a partner
+ * agreement we haven't signed yet. Tracked separately.
+ */
+async function cfgFor(tenantId?: string): Promise<RpConfig> {
+  if (tenantId) {
+    const resolved = await resolveIntegration('razorpay', tenantId);
+    if (resolved && resolved.source === 'tenant') {
+      return {
+        keyId: resolved.credentials.keyId,
+        keySecret: resolved.credentials.keySecret,
+        webhookSecret: resolved.credentials.webhookSecret,
+        source: 'tenant',
+      };
+    }
+  }
+  return {
+    keyId: process.env.RAZORPAY_KEY_ID,
+    keySecret: process.env.RAZORPAY_KEY_SECRET,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+    source: process.env.RAZORPAY_KEY_ID ? 'env' : 'none',
+  };
+}
 
 export interface CreatePaymentLinkArgs {
   amountInRupees: number;
@@ -25,12 +65,11 @@ export interface CreatePaymentLinkResult {
 
 const HOST = 'https://api.razorpay.com/v1';
 
-export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<CreatePaymentLinkResult> {
-  const id = process.env.RAZORPAY_KEY_ID;
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!id || !secret) {
+export async function createPaymentLink(args: CreatePaymentLinkArgs, tenantId?: string): Promise<CreatePaymentLinkResult> {
+  const c = await cfgFor(tenantId);
+  if (!c.keyId || !c.keySecret) {
     const mockId = `plink_mock_${args.reference}`;
-    logger.warn({ reference: args.reference }, 'razorpay.mock-mode');
+    logger.warn({ reference: args.reference, tenantId: tenantId ?? null }, 'razorpay.mock-mode');
     const back = args.callbackUrl ?? '';
     const backParam = back ? `&back=${encodeURIComponent(back)}` : '';
     return {
@@ -39,7 +78,7 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<Cr
       mock: true,
     };
   }
-  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+  const auth = Buffer.from(`${c.keyId}:${c.keySecret}`).toString('base64');
   const res = await fetch(`${HOST}/payment_links`, {
     method: 'POST',
     headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
@@ -86,18 +125,17 @@ export interface CreateMandateResult {
  * the platform we create a registration order and return its hosted auth link.
  * Mock mode (no keys) returns a placeholder mandate the UI can still exercise.
  */
-export async function createAutopayMandate(args: CreateMandateArgs): Promise<CreateMandateResult> {
-  const id = process.env.RAZORPAY_KEY_ID;
-  const secret = process.env.RAZORPAY_KEY_SECRET;
+export async function createAutopayMandate(args: CreateMandateArgs, tenantId?: string): Promise<CreateMandateResult> {
+  const c = await cfgFor(tenantId);
   const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
-  if (!id || !secret) {
+  if (!c.keyId || !c.keySecret) {
     return {
       providerRef: `mandate_mock_${Date.now()}`,
       authUrl: `${appUrl}/p/mock-pay?mandate=1`,
       mock: true,
     };
   }
-  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+  const auth = Buffer.from(`${c.keyId}:${c.keySecret}`).toString('base64');
   // Create a payment link flagged for recurring token registration.
   const res = await fetch(`${HOST}/payment_links`, {
     method: 'POST',
@@ -118,8 +156,8 @@ export async function createAutopayMandate(args: CreateMandateArgs): Promise<Cre
   return { providerRef: data.id, authUrl: data.short_url, mock: false };
 }
 
-export function verifyWebhookSignature(rawBody: string, signature: string): boolean {
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+export function verifyWebhookSignature(rawBody: string, signature: string, secretOverride?: string): boolean {
+  const secret = secretOverride ?? process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!secret) return process.env.NODE_ENV !== 'production'; // accept in dev only
   if (!signature) return false;
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
@@ -132,18 +170,31 @@ export function verifyWebhookSignature(rawBody: string, signature: string): bool
 }
 
 /**
+ * Resolve the webhook secret for verification.
+ *
+ * The Razorpay webhook payload includes the payment_link's `notes` we set
+ * during create — we stuffed `tenantId` in there so the webhook handler can
+ * find the right tenant. Callers should look up tenantId from the matched
+ * Invoice row (which is also tenant-scoped) and pass it here.
+ */
+export async function resolveWebhookSecret(tenantId?: string): Promise<string | undefined> {
+  const c = await cfgFor(tenantId);
+  return c.webhookSecret;
+}
+
+/**
  * Fetch the current status of a payment link (for the reconcile-sweep cron).
  * Returns null on any error / mock id so callers can skip gracefully.
  */
 export async function fetchPaymentLinkStatus(
-  paymentLinkId: string
+  paymentLinkId: string,
+  tenantId?: string,
 ): Promise<{ status: string; amountPaid: number } | null> {
-  const id = process.env.RAZORPAY_KEY_ID;
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!id || !secret) return null;
+  const c = await cfgFor(tenantId);
+  if (!c.keyId || !c.keySecret) return null;
   if (paymentLinkId.startsWith('plink_mock_')) return null;
   try {
-    const auth = Buffer.from(`${id}:${secret}`).toString('base64');
+    const auth = Buffer.from(`${c.keyId}:${c.keySecret}`).toString('base64');
     const res = await fetch(`${HOST}/payment_links/${paymentLinkId}`, {
       headers: { authorization: `Basic ${auth}` },
     });

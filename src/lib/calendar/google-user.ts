@@ -108,9 +108,61 @@ export async function pushUserEvent(userId: string, externalId: string | null, e
       body: JSON.stringify(body),
     });
     if (!res.ok) { logger.warn({ status: res.status, err: await res.text() }, 'google-user.push.failed'); return null; }
-    const data = (await res.json()) as { id: string; hangoutLink?: string };
-    return { externalId: data.id, hangoutLink: data.hangoutLink ?? null };
+    const data = (await res.json()) as {
+      id: string;
+      hangoutLink?: string;
+      conferenceData?: {
+        entryPoints?: { entryPointType?: string; uri?: string }[];
+        createRequest?: { status?: { statusCode?: string } };
+      };
+    };
+
+    // Google provisions Meet links asynchronously when you use conferenceData.createRequest.
+    // The hangoutLink + entryPoints often aren't populated in the immediate create response.
+    // If we asked for a Meet link but didn't get one, GET the event a couple of times until
+    // Google has finished provisioning.
+    let hangoutLink = data.hangoutLink
+      ?? data.conferenceData?.entryPoints?.find((p) => p.entryPointType === 'video')?.uri
+      ?? null;
+    if (e.addMeetLink && !hangoutLink && !externalId) {
+      hangoutLink = await pollForMeetLink(token, data.id);
+    }
+    return { externalId: data.id, hangoutLink };
   } catch (e) { logger.warn({ err: (e as Error).message }, 'google-user.push.error'); return null; }
+}
+
+/**
+ * After a create-with-Meet, Google may not have provisioned the Meet link yet.
+ * GET the event up to 3 times (~0/500/1500ms) to pick up the hangoutLink once
+ * conferenceData.createRequest.status.statusCode === "success".
+ */
+async function pollForMeetLink(token: string, eventId: string): Promise<string | null> {
+  const delays = [0, 500, 1500];
+  for (const delay of delays) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(`${CAL_BASE}/calendars/primary/events/${eventId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        hangoutLink?: string;
+        conferenceData?: {
+          entryPoints?: { entryPointType?: string; uri?: string }[];
+          createRequest?: { status?: { statusCode?: string } };
+        };
+      };
+      const link = data.hangoutLink
+        ?? data.conferenceData?.entryPoints?.find((p) => p.entryPointType === 'video')?.uri;
+      if (link) return link;
+      // If Google says provisioning failed, stop polling.
+      if (data.conferenceData?.createRequest?.status?.statusCode === 'failure') return null;
+    } catch {
+      // Keep polling — transient network error.
+    }
+  }
+  logger.warn({ eventId }, 'google-user.meet-link.not-provisioned');
+  return null;
 }
 
 export interface BusySlot { start: Date; end: Date }

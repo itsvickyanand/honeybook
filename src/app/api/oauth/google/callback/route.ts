@@ -80,7 +80,7 @@ export async function GET(req: Request) {
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await issueSession({ userId: user.id, tenantId: user.tenantId, roleId: user.roleId, email: user.email });
-    return NextResponse.redirect(`${appUrl}/app`);
+    return NextResponse.redirect(`${appUrl}/app/setup`);
   } catch {
     return NextResponse.redirect(`${appUrl}/login?error=oauth_failed`);
   }

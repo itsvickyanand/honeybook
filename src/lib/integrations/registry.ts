@@ -32,7 +32,7 @@ export interface IntegrationSpec {
   /** Tenant-level integrations that are also valid as platform fallbacks. */
   fallbackToPlatform?: boolean;
   /** Field-level shape for the connect form (apiKey kind only). */
-  fields?: { key: string; label: string; type: 'text' | 'password' | 'url'; required?: boolean; helpText?: string }[];
+  fields?: { key: string; label: string; type: 'text' | 'password' | 'url' | 'textarea'; required?: boolean; helpText?: string }[];
   /** Vercel-side public callback path for OAuth-kind integrations. */
   oauthCallback?: string;
   optional: boolean;
@@ -192,6 +192,26 @@ const SPECS: IntegrationSpec[] = [
       { key: 'clientId', label: 'Client ID', type: 'text', required: true },
       { key: 'clientSecret', label: 'Client secret', type: 'password', required: true },
       { key: 'env', label: 'Environment', type: 'text', required: true, helpText: 'sandbox | production' },
+    ],
+    optional: true,
+  },
+  {
+    provider: 'docusign',
+    displayName: 'DocuSign',
+    category: 'esign',
+    scope: 'tenant',
+    kind: 'apiKey',
+    description: 'Enterprise e-sign via JWT Grant — clients sign embedded in your portal.',
+    docsUrl: 'https://developers.docusign.com/platform/auth/jwt/',
+    envKeys: ['DOCUSIGN_INTEGRATION_KEY', 'DOCUSIGN_USER_ID', 'DOCUSIGN_PRIVATE_KEY', 'DOCUSIGN_OAUTH_HOST', 'DOCUSIGN_BASE_URI', 'DOCUSIGN_ACCOUNT_ID'],
+    fallbackToPlatform: true,
+    fields: [
+      { key: 'integrationKey', label: 'Integration Key (Client ID)', type: 'text', required: true },
+      { key: 'userId', label: 'API User ID (GUID)', type: 'text', required: true },
+      { key: 'privateKey', label: 'RSA private key (PEM)', type: 'textarea', required: true, helpText: 'Paste the full -----BEGIN RSA PRIVATE KEY----- block.' },
+      { key: 'oauthHost', label: 'OAuth host', type: 'text', required: true, helpText: 'account-d.docusign.com (sandbox) or account.docusign.com (live)' },
+      { key: 'baseUri', label: 'Base URI', type: 'text', required: true, helpText: 'https://demo.docusign.net or https://www.docusign.net' },
+      { key: 'accountId', label: 'API Account ID', type: 'text', required: true },
     ],
     optional: true,
   },

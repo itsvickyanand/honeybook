@@ -54,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     pdfBase64,
     filename: `${proposal.title}-agreement.pdf`,
     returnUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/p/${proposal.shareToken}?signed=1`,
-  });
+  }, proposal.tenantId);
 
   const sig = await prisma.signatureRequest.create({
     data: {

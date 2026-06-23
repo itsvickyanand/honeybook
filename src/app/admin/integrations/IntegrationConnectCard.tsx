@@ -8,7 +8,7 @@ import { ChevronDown, ExternalLink } from 'lucide-react';
 interface FieldSpec {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'url';
+  type: 'text' | 'password' | 'url' | 'textarea';
   required?: boolean;
   helpText?: string;
 }
@@ -145,12 +145,21 @@ export default function IntegrationConnectCard({
               <label className="block text-xs font-medium text-slate-700">
                 {f.label}{f.required ? ' *' : ''}
               </label>
-              <input
-                type={f.type}
-                value={values[f.key] ?? ''}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-rose-500"
-              />
+              {f.type === 'textarea' ? (
+                <textarea
+                  value={values[f.key] ?? ''}
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                  rows={6}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm font-mono outline-none focus:border-rose-500"
+                />
+              ) : (
+                <input
+                  type={f.type}
+                  value={values[f.key] ?? ''}
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-rose-500"
+                />
+              )}
               {f.helpText && <p className="mt-0.5 text-xs text-slate-500">{f.helpText}</p>}
             </div>
           ))}

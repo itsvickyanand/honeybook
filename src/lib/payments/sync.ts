@@ -28,7 +28,7 @@ export async function syncInvoiceFromGateway(invoiceId: string): Promise<{ updat
 
   let updated = false;
   for (const p of pendings) {
-    const st = await fetchPaymentLinkStatus(p.providerOrderId!);
+    const st = await fetchPaymentLinkStatus(p.providerOrderId!, p.tenantId);
     if (!st) continue; // mock id / API error — skip gracefully
     if (st.status === 'paid' || (st.status === 'partially_paid' && st.amountPaid > 0)) {
       await prisma.payment.update({

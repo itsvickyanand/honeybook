@@ -47,7 +47,7 @@ export async function POST(req: Request) {
       customer,
       description: `AutoPay mandate · ${auth.tenant.name}`,
       callbackUrl: `${appUrl}/app/projects/${parsed.data.projectId ?? ''}`,
-    });
+    }, auth.tenant.id);
   } catch (e) {
     return NextResponse.json({ error: 'gateway_error', detail: (e as Error).message.slice(0, 200) }, { status: 400 });
   }

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, Pencil, Check, X, Plus, Minus, MessageSquare, ThumbsUp, ThumbsDown, Send, ShieldCheck,
-  CreditCard, PenSquare,
+  CreditCard, PenSquare, Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +11,9 @@ import { Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { ProposalDoc, computeTotals } from '@/lib/proposal-schema';
 import { formatCurrency } from '@/lib/utils';
+import type { Block } from '@/lib/proposals/blocks';
+import { renderBlock } from '@/lib/proposals/blocks-render';
+import { sampleVars } from '@/lib/proposals/blocks-client';
 
 interface ClientPortalProps {
   token: string;
@@ -24,6 +27,20 @@ interface ClientPortalProps {
   template?: { theme: { primary: string; accent: string }; sections: { id: string; kind: string; visible: boolean; title?: string }[] };
   galleries?: { id: string; title: string; items: { id: string; fileId: string; approved: boolean | null }[] }[];
   documents?: { id: string; title: string; category: string; status: string; isTemplate: boolean }[];
+  /** New: block-builder output from the chosen ProposalTemplate. When non-null
+   *  the portal renders blocks in order instead of the legacy fixed layout. */
+  templateBlocks?: Block[] | null;
+  /** Pre-resolved context for the block renderer. Server-built so we don't
+   *  re-fetch / re-format on every keystroke. */
+  blockRenderData?: {
+    accentColor: string;
+    vendorLogoUrl: string | null;
+    totals: { subTotal: string; discount: string; tax: string; total: string; taxLabel: string; taxRate: number };
+    galleries: { id: string; title: string; thumbnailUrls: string[] }[];
+    paymentSchedule: { label: string; dueDate: string | null; amount: string }[];
+    defaultDepositPercent: number | null;
+    appUrl: string;
+  };
 }
 
 export function ClientPortal({
@@ -38,6 +55,8 @@ export function ClientPortal({
   template,
   galleries = [],
   documents = [],
+  templateBlocks = null,
+  blockRenderData,
 }: ClientPortalProps) {
   const [doc, setDoc] = React.useState<ProposalDoc>(initialDoc);
   const [status, setStatus] = React.useState(initialStatus);
@@ -54,6 +73,10 @@ export function ClientPortal({
   } | null>(null);
   const [signature, setSignature] = React.useState<{ id: string; status: string } | null>(null);
   const [flash, setFlash] = React.useState<'paid' | 'signed' | null>(null);
+  // Embedded DocuSign iframe state
+  const [embedUrl, setEmbedUrl] = React.useState<string | null>(null);
+  const [embedProvider, setEmbedProvider] = React.useState<'digio' | 'docusign' | null>(null);
+  const embedIframeRef = React.useRef<HTMLIFrameElement | null>(null);
 
   const totals = React.useMemo(() => computeTotals(doc), [doc]);
 
@@ -65,6 +88,13 @@ export function ClientPortal({
     const justSigned = sp.get('signed') === '1';
     if (!justPaid && !justSigned) return;
     setFlash(justPaid ? 'paid' : 'signed');
+    // When we land back here from a signing redirect, kick the server-side
+    // finalize once so the signed PDF gets pulled + filed as a Document. The
+    // webhook is a safety net; this makes the file appear immediately even
+    // when DocuSign Connect isn't configured.
+    if (justSigned) {
+      fetch(`/api/share/${token}/sign/finalize`, { method: 'POST' }).catch(() => { /* webhook handles it */ });
+    }
     let cancelled = false;
     let attempts = 0;
     async function poll() {
@@ -154,10 +184,98 @@ export function ClientPortal({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
+      // DocuSign embedded signing → open the URL in an iframe modal so the
+      // client never leaves this proposal page. Other providers (digio/mock)
+      // still redirect away.
+      if (provider === 'docusign' && data.signUrl && !data.mock) {
+        setEmbedProvider('docusign');
+        setEmbedUrl(data.signUrl);
+        setSigning(false);
+        return;
+      }
       window.location.href = data.signUrl;
     } catch (e) {
       toast.error((e as Error).message);
       setSigning(false);
+    }
+  }
+
+  /**
+   * When the DocuSign iframe completes signing, DocuSign redirects to the
+   * `returnUrl` we passed when minting the recipient view. That URL is on our
+   * own origin (`/p/${token}?signed=1`) so we can read the iframe's location
+   * cross-frame (same-origin) and pick up `event=signing_complete`.
+   */
+  function onEmbedLoad() {
+    const iframe = embedIframeRef.current;
+    if (!iframe) return;
+    try {
+      const url = iframe.contentWindow?.location.href ?? '';
+      if (!url || !url.includes(window.location.origin)) return; // still on docusign.net
+      const sp = new URL(url).searchParams;
+      const event = sp.get('event');
+      if (event && ['signing_complete', 'cancel', 'decline', 'ttl_expired'].includes(event)) {
+        setEmbedUrl(null);
+        setEmbedProvider(null);
+        if (event === 'signing_complete') {
+          toast.success('Document signed — saving to your files…');
+          // 1. Server-side finalize: pull the signed PDF directly from
+          //    DocuSign and file it as a CONTRACT Document on the project.
+          //    Idempotent — safe to call even if the webhook already ran.
+          fetch(`/api/share/${token}/sign/finalize`, { method: 'POST' })
+            .then((r) => r.json())
+            .then((d) => {
+              if (d?.documentId) {
+                // Auto-download the signed PDF for the client right away.
+                downloadDocument(d.documentId).catch(() => { /* toast handled inside */ });
+              }
+              // If pdfPending, the webhook (or next portal visit) will finalize.
+            })
+            .catch(() => { /* webhook is the safety net */ });
+          // 2. Trigger the existing post-sign poll loop so the signed badge
+          //    flips as soon as the SignatureRequest row is updated.
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.set('signed', '1');
+          window.history.replaceState({}, '', cleanUrl.toString());
+          window.dispatchEvent(new Event('focus'));
+        } else {
+          toast(event === 'cancel' ? 'Signing cancelled' : `Signing ${event.replace('_', ' ')}`);
+        }
+      }
+    } catch {
+      // Cross-origin while still on docusign.net — expected, ignore.
+    }
+  }
+
+  function closeEmbed() {
+    setEmbedUrl(null);
+    setEmbedProvider(null);
+  }
+
+  /**
+   * Resolve a document's short-lived presigned URL and trigger a browser
+   * download. Used by both the per-row Download button and the auto-download
+   * after DocuSign signing completes.
+   */
+  async function downloadDocument(documentId: string) {
+    try {
+      const res = await fetch(`/api/share/${token}/documents/${documentId}`);
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error ?? 'Could not get download link.');
+      // Use an anchor with `download` so the browser doesn't navigate away.
+      const a = document.createElement('a');
+      a.href = data.url;
+      a.download = data.filename ?? 'document.pdf';
+      a.rel = 'noopener';
+      // Most modern browsers honor `download` cross-origin only when the URL is
+      // same-origin — R2 returns the file as an attachment via the response
+      // headers we set, so a new-tab open is the safest fallback.
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   }
 
@@ -333,6 +451,40 @@ export function ClientPortal({
         )}
       </header>
 
+      {/* New: template blocks (Phase 3). When the vendor designed the template
+       *  in the visual builder, render those blocks in their order. The bottom
+       *  Accept/Decline/Pay/Sign CTA always renders regardless — it's about
+       *  proposal state, not template shape. */}
+      {templateBlocks && templateBlocks.length > 0 && blockRenderData && (
+        <section className="relative z-10 mx-auto max-w-4xl px-6 mt-16 space-y-2">
+          {templateBlocks.map((b) => {
+            const html = renderBlock(b, {
+              doc,
+              vars: { ...sampleVars(vendor.name), clientName: doc.clientName || sampleVars(vendor.name).clientName },
+              accentColor: blockRenderData.accentColor,
+              vendorLogoUrl: blockRenderData.vendorLogoUrl,
+              totals: blockRenderData.totals,
+              galleries: blockRenderData.galleries,
+              paymentSchedule: blockRenderData.paymentSchedule,
+              defaultDepositPercent: blockRenderData.defaultDepositPercent,
+              appUrl: blockRenderData.appUrl,
+              formatShortDate: (d) => new Date(d).toLocaleDateString(locale),
+            });
+            return (
+              <div
+                key={b.id}
+                className="block-render"
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            );
+          })}
+        </section>
+      )}
+
+      {/* Legacy layout (sections + pricing + plugin sections + inclusions/terms).
+       *  Renders ONLY when the template doesn't have block-builder output. */}
+      {(!templateBlocks || templateBlocks.length === 0) && (
+        <>
       {/* Sections */}
       <section className="relative z-10 mx-auto max-w-4xl px-6 mt-16 space-y-8">
         {doc.sections.map((s, idx) => (
@@ -524,9 +676,19 @@ export function ClientPortal({
                 <h2 className="text-2xl font-semibold">{s.title ?? 'Documents'}</h2>
                 <ul className="mt-4 space-y-2 text-sm">
                   {documents.map((d) => (
-                    <li key={d.id} className="flex items-center justify-between rounded-xl border bg-[var(--color-surface-2)] p-3">
-                      <span>{d.title}</span>
-                      <span className="chip text-xs">{d.category}</span>
+                    <li key={d.id} className="flex items-center justify-between gap-3 rounded-xl border bg-[var(--color-surface-2)] p-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">{d.title}</div>
+                      </div>
+                      <span className="chip text-xs shrink-0">{d.category}</span>
+                      <button
+                        type="button"
+                        onClick={() => downloadDocument(d.id)}
+                        className="btn-ghost shrink-0 text-xs"
+                        aria-label={`Download ${d.title}`}
+                      >
+                        <Download className="h-4 w-4" /> Download
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -569,6 +731,8 @@ export function ClientPortal({
             </div>
           )}
         </section>
+      )}
+        </>
       )}
 
       {/* Accept / Decline CTA */}
@@ -624,25 +788,43 @@ export function ClientPortal({
                       </Button>
                     );
                   })()}
-                  {signature?.status !== 'SIGNED' && (
-                    <>
-                      <Button
-                        variant={invoice?.status === 'PAID' ? 'primary' : 'secondary'}
-                        onClick={() => sign('digio')}
-                        loading={signing}
-                      >
-                        <PenSquare className="h-4 w-4" /> Sign with Aadhaar
-                      </Button>
-                      <Button variant="secondary" onClick={() => sign('docusign')} loading={signing}>
-                        <PenSquare className="h-4 w-4" /> Sign with DocuSign
-                      </Button>
-                    </>
-                  )}
-                  {signature?.status === 'SIGNED' && (
-                    <a href={`/api/share/${token}/contract`} target="_blank" rel="noreferrer" className="btn-secondary text-sm">
-                      <Check className="h-4 w-4" /> Download signed agreement
-                    </a>
-                  )}
+                  {(() => {
+                    const isSigned = signature?.status === 'SIGNED';
+                    return (
+                      <>
+                        <Button
+                          variant={invoice?.status === 'PAID' && !isSigned ? 'primary' : 'secondary'}
+                          onClick={() => sign('digio')}
+                          loading={signing && !isSigned}
+                          disabled={isSigned || signing}
+                          title={isSigned ? 'Agreement already signed' : 'Sign with Aadhaar OTP'}
+                        >
+                          {isSigned ? <Check className="h-4 w-4 text-emerald-400" /> : <PenSquare className="h-4 w-4" />}
+                          {isSigned ? 'Signed' : 'Sign with Aadhaar'}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => sign('docusign')}
+                          loading={signing && !isSigned}
+                          disabled={isSigned || signing}
+                          title={isSigned ? 'Agreement already signed' : 'Sign with DocuSign'}
+                        >
+                          {isSigned ? <Check className="h-4 w-4 text-emerald-400" /> : <PenSquare className="h-4 w-4" />}
+                          {isSigned ? 'Signed' : 'Sign with DocuSign'}
+                        </Button>
+                        {isSigned && (
+                          <a
+                            href={`/api/share/${token}/contract`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-secondary text-sm"
+                          >
+                            <Download className="h-4 w-4" /> Download signed agreement
+                          </a>
+                        )}
+                      </>
+                    );
+                  })()}
                   {invoice?.status === 'PAID' && signature?.status === 'SIGNED' && (
                     <div className="text-sm text-emerald-300 inline-flex items-center gap-2">
                       <Check className="h-4 w-4" /> All set — the team will reach out shortly.
@@ -770,6 +952,32 @@ export function ClientPortal({
           </Button>
         </div>
       </Modal>
+
+      {/* Embedded DocuSign signing — full-screen iframe overlay */}
+      {embedUrl && (
+        <div className="fixed inset-0 z-[100] flex flex-col bg-black/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b border-white/10 bg-[var(--color-surface)] px-4 py-2">
+            <div className="text-sm font-medium">
+              Signing your agreement · {embedProvider === 'docusign' ? 'DocuSign' : embedProvider}
+            </div>
+            <button
+              onClick={closeEmbed}
+              className="text-xs text-[var(--color-muted)] hover:text-white"
+              aria-label="Close signing window"
+            >
+              Cancel
+            </button>
+          </div>
+          <iframe
+            ref={embedIframeRef}
+            src={embedUrl}
+            onLoad={onEmbedLoad}
+            title="Sign agreement"
+            className="flex-1 w-full bg-white"
+            allow="camera; microphone; geolocation; clipboard-write"
+          />
+        </div>
+      )}
     </main>
   );
 }

@@ -14,11 +14,15 @@ import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
 import { IntegrationStatusCard } from '@/components/dashboard/IntegrationStatusCard';
+import { OnboardingBanner } from '@/components/dashboard/OnboardingBanner';
+import { DemoModeBanner } from '@/components/dashboard/DemoModeBanner';
+import { getDemoModeProviders } from '@/lib/integrations/demo-mode';
 import { formatCurrency, timeAgo } from '@/lib/utils';
 
 export default async function DashboardHome() {
   const ctx = await requireContext();
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const demoProviders = await getDemoModeProviders(ctx.tenant.id);
 
   const [
     tableCount,
@@ -74,6 +78,8 @@ export default async function DashboardHome() {
   return (
     <PageTransition>
       <div className="p-6 md:p-10 max-w-7xl mx-auto">
+        {!ctx.tenant.onboardingCompletedAt && <OnboardingBanner businessName={ctx.tenant.name} />}
+        <DemoModeBanner providers={demoProviders} />
         {/* Hero */}
         <div className="card p-8 mb-8 relative overflow-hidden">
           <div

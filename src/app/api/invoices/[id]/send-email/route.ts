@@ -55,6 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : '';
 
   await sendEmail({
+    tenantId: tenant.id,
     to,
     subject: `Invoice ${invoice.number} from ${tenant.name}`,
     html: `<p>Hi,</p>

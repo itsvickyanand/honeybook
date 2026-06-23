@@ -20,6 +20,7 @@ export default async function SettingsPage() {
     { href: '/app/settings/integrations', title: 'Integrations', description: 'Zoho, Google Calendar, Tally, payments, eSign', icon: Plug },
     { href: '/app/settings/whatsapp', title: 'WhatsApp templates', description: 'Manage approved Meta templates', icon: MessageSquare },
     { href: '/app/settings/ai', title: 'AI configuration', description: 'Tone, upsell, mandatory items, custom instructions', icon: Sparkles },
+    { href: '/app/onboarding', title: 'Re-do AI onboarding', description: 'Re-answer the wizard to refresh your templates, contract and catalog', icon: Sparkles },
     { href: '/app/settings/portal', title: 'Portal builder', description: 'Sections, theme colors, preview', icon: Layout },
     { href: '/app/settings/lead-scoring', title: 'Lead scoring rules', description: 'Add/subtract points based on lead fields', icon: ListChecks },
     { href: '/app/settings/drips', title: 'Email sequences', description: 'Automated follow-ups by trigger', icon: Mail },

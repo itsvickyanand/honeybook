@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const sig = await prisma.signatureRequest.findFirst({ where: { externalId: body.doc_id } });
     if (sig) {
       await prisma.signatureRequest.update({ where: { id: sig.id }, data: { status: 'SIGNED', signedAt: new Date() } });
-      const pdf = await downloadDigioSigned(body.doc_id);
+      const pdf = await downloadDigioSigned(body.doc_id, sig.tenantId);
       if (pdf) {
         await storeSignedContract(sig.id, pdf, `agreement-${sig.id.slice(-8)}.pdf`)
           .catch((e) => logger.warn({ err: (e as Error).message }, 'digio.store-failed'));

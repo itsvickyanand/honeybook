@@ -22,6 +22,9 @@ const schema = z.object({
   housePhrases: z.array(z.string()).optional(),
   alwaysIncludeItems: z.array(z.string()).optional(),
   sectionOrder: z.array(z.string()).optional(),
+  /** Block-builder JSON. Accept any array shape here — the renderer + a server
+   *  parse with parseBlocks() guard against malformed entries downstream. */
+  blocks: z.array(z.unknown()).nullable().optional(),
   isDefault: z.boolean().optional(),
 });
 
@@ -44,6 +47,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (parsed.data.housePhrases) data.housePhrases = parsed.data.housePhrases as object;
   if (parsed.data.alwaysIncludeItems) data.alwaysIncludeItems = parsed.data.alwaysIncludeItems as object;
   if (parsed.data.sectionOrder) data.sectionOrder = parsed.data.sectionOrder as object;
+  if (parsed.data.blocks !== undefined) data.blocks = parsed.data.blocks as object | null;
 
   const template = await prisma.proposalTemplate.update({ where: { id }, data });
   return NextResponse.json({ template });

@@ -27,6 +27,9 @@ export function PublicForm({
   const [values, setValues] = React.useState<Record<string, string>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [done, setDone] = React.useState(false);
+  /** When the submit handler returns a meeting-type slug (book_meeting action),
+   *  we switch into a scheduler step that embeds the public /book/<slug> page. */
+  const [embedMeetingSlug, setEmbedMeetingSlug] = React.useState<string | null>(null);
 
   function set(name: string, v: string) { setValues((s) => ({ ...s, [name]: v })); }
 
@@ -41,10 +44,46 @@ export function PublicForm({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
-      setDone(true);
-      if (data.redirectUrl) setTimeout(() => { window.location.href = data.redirectUrl; }, 1200);
+      // Multi-step routing priority:
+      //   1. paymentLinkUrl  → go straight to Razorpay checkout (instant booking)
+      //   2. embedMeetingTypeSlug → show scheduler embed for slot pick
+      //   3. plain thanks + optional custom redirect
+      if (data.paymentLinkUrl) {
+        window.location.href = data.paymentLinkUrl;
+      } else if (data.embedMeetingTypeSlug) {
+        setEmbedMeetingSlug(data.embedMeetingTypeSlug);
+      } else {
+        setDone(true);
+        if (data.redirectUrl) setTimeout(() => { window.location.href = data.redirectUrl; }, 1200);
+      }
     } catch (e) { toast.error((e as Error).message); }
     finally { setSubmitting(false); }
+  }
+
+  if (embedMeetingSlug) {
+    const params = new URLSearchParams({
+      embed: '1',
+      name: values.name ?? '',
+      email: values.email ?? '',
+      phone: values.phone ?? '',
+    });
+    return (
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-3xl">
+        <div className="card p-6">
+          <div className="mb-4 text-center">
+            <div className="inline-flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              <Check className="h-3 w-3 text-emerald-400" /> Step 1 complete · pick a time below
+            </div>
+            <h2 className="mt-2 text-xl font-semibold">Pick a time that works for you</h2>
+          </div>
+          <iframe
+            src={`/book/${encodeURIComponent(embedMeetingSlug)}?${params.toString()}`}
+            className="h-[640px] w-full rounded-xl border border-[var(--color-border)] bg-white"
+            title="Pick a meeting time"
+          />
+        </div>
+      </motion.div>
+    );
   }
 
   if (done) {

@@ -8,24 +8,54 @@
 import type { Invoice } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import { logger } from './logger';
+import { resolveIntegration } from './integrations/resolve';
+
+/**
+ * Per-tenant credential resolution.
+ *
+ * Indian GST e-invoicing MUST be dispatched against each vendor's own GSTIN —
+ * the IRN issued by NIC is tied to the seller's GSTIN, not Avantus's. So this
+ * adapter resolves the tenant's IRP credentials first; the platform env vars
+ * are a demo-only fallback that should never be used for real filings.
+ */
+async function cfgFor(invoice: Invoice): Promise<{ provider: string; apiKey?: string; gspId?: string; sellerGstin?: string }> {
+  const tenantId = invoice.tenantId;
+  if (tenantId) {
+    const resolved = await resolveIntegration('gst_irp', tenantId);
+    if (resolved && resolved.source === 'tenant') {
+      return {
+        provider: resolved.credentials.provider ?? process.env.GST_IRP_PROVIDER ?? 'cleartax',
+        apiKey: resolved.credentials.apiKey,
+        gspId: resolved.credentials.gspId,
+        sellerGstin: resolved.credentials.sellerGstin,
+      };
+    }
+  }
+  return {
+    provider: process.env.GST_IRP_PROVIDER ?? 'mock',
+    apiKey: process.env.GST_IRP_KEY,
+    gspId: process.env.GST_IRP_GSPID,
+    sellerGstin: process.env.GST_SELLER_GSTIN,
+  };
+}
 
 export async function generateIrnForInvoice(invoice: Invoice): Promise<{ irn: string; qrCode: string }> {
-  const provider = process.env.GST_IRP_PROVIDER || 'mock';
-  if (provider === 'mock' || !process.env.GST_IRP_KEY) {
+  const c = await cfgFor(invoice);
+  if (c.provider === 'mock' || !c.apiKey) {
     return { irn: `MOCK-${nanoid(32)}`, qrCode: '' };
   }
 
-  if (provider === 'cleartax') {
+  if (c.provider === 'cleartax') {
     // ClearTax v1 e-invoicing API. Endpoint, headers and payload shape per their docs.
     // See: https://docs.cleartax.in/e-invoicing/
     const res = await fetch('https://gsp.cleartax.in/einvoice/v1/generate', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': process.env.GST_IRP_KEY,
-        ...(process.env.GST_IRP_GSPID ? { 'x-gspid': process.env.GST_IRP_GSPID } : {}),
+        'x-api-key': c.apiKey,
+        ...(c.gspId ? { 'x-gspid': c.gspId } : {}),
       },
-      body: JSON.stringify(buildClearTaxPayload(invoice)),
+      body: JSON.stringify(buildClearTaxPayload(invoice, c.sellerGstin)),
     });
     if (!res.ok) {
       const text = await res.text();
@@ -36,7 +66,7 @@ export async function generateIrnForInvoice(invoice: Invoice): Promise<{ irn: st
     return { irn: data.Irn, qrCode: data.SignedQRCode };
   }
 
-  throw new Error(`Unsupported GST IRP provider: ${provider}`);
+  throw new Error(`Unsupported GST IRP provider: ${c.provider}`);
 }
 
 interface ContentJson {
@@ -44,7 +74,7 @@ interface ContentJson {
   billToPlaceOfSupply?: string;
 }
 
-function buildClearTaxPayload(invoice: Invoice) {
+function buildClearTaxPayload(invoice: Invoice, sellerGstin?: string) {
   const content = (invoice.contentJson ?? {}) as ContentJson;
   const lineItems = content.lineItems ?? [];
   return {
@@ -52,8 +82,9 @@ function buildClearTaxPayload(invoice: Invoice) {
     TranDtls: { TaxSch: 'GST', SupTyp: 'B2B' },
     DocDtls: { Typ: 'INV', No: invoice.number ?? invoice.id, Dt: invoice.issueDate.toISOString().slice(0, 10).split('-').reverse().join('/') },
     SellerDtls: {
-      // Vendor org details — TODO pull from Tenant + provider seller config
-      Gstin: process.env.GST_SELLER_GSTIN ?? '00AAAAA0000A1Z5',
+      // Vendor GSTIN comes from per-tenant config — that's the WHOLE POINT of
+      // routing GST IRP at tenant level.
+      Gstin: sellerGstin ?? '00AAAAA0000A1Z5',
       LglNm: 'Avantus Vendor',
       Pos: invoice.placeOfSupply.replace('IN-', ''),
     },

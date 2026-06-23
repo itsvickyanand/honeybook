@@ -4,9 +4,15 @@
  *   1. createSignRequest -> Digio returns a request id + signing URL
  *   2. Client signs via Aadhaar OTP / dSign
  *   3. Digio webhook fires SIGNED with signed PDF URL
+ *
+ * Per-tenant credentials: if a tenantId is passed, we resolve from the
+ * Integration table first. Otherwise we fall back to the platform env vars
+ * (demo mode). Aadhaar eSign issued under each vendor's own Digio account is
+ * legally clean — the signature certificate names THEIR company, not ours.
  */
 import { logger } from '../logger';
 import { nanoid } from 'nanoid';
+import { resolveIntegration } from '../integrations/resolve';
 
 export interface SignRequestArgs {
   signerName: string;
@@ -23,21 +29,52 @@ export interface SignRequestResult {
   mock: boolean;
 }
 
-const HOST = 'https://api.digio.in/v2';
+interface DigioConfig {
+  clientId?: string;
+  clientSecret?: string;
+  /** sandbox | production */
+  env?: string;
+  source: 'tenant' | 'platform' | 'env' | 'none';
+}
 
-export async function createSignRequest(args: SignRequestArgs): Promise<SignRequestResult> {
-  const id = process.env.DIGIO_CLIENT_ID;
-  const secret = process.env.DIGIO_CLIENT_SECRET;
-  if (!id || !secret) {
-    logger.warn({ signer: args.signerEmail }, 'digio.mock-mode');
+async function cfgFor(tenantId?: string): Promise<DigioConfig> {
+  if (tenantId) {
+    const resolved = await resolveIntegration('digio', tenantId);
+    if (resolved && resolved.source === 'tenant') {
+      return {
+        clientId: resolved.credentials.clientId,
+        clientSecret: resolved.credentials.clientSecret,
+        env: resolved.credentials.env,
+        source: 'tenant',
+      };
+    }
+  }
+  return {
+    clientId: process.env.DIGIO_CLIENT_ID,
+    clientSecret: process.env.DIGIO_CLIENT_SECRET,
+    env: process.env.DIGIO_ENV,
+    source: process.env.DIGIO_CLIENT_ID ? 'env' : 'none',
+  };
+}
+
+function hostFor(c: DigioConfig): string {
+  // Real Digio API base is the same for sandbox vs prod (they differentiate by
+  // creds), but a custom env override is supported.
+  return process.env.DIGIO_API_BASE ?? 'https://api.digio.in/v2';
+}
+
+export async function createSignRequest(args: SignRequestArgs, tenantId?: string): Promise<SignRequestResult> {
+  const c = await cfgFor(tenantId);
+  if (!c.clientId || !c.clientSecret) {
+    logger.warn({ signer: args.signerEmail, tenantId: tenantId ?? null }, 'digio.mock-mode');
     return {
       externalId: `mock-sig-${nanoid(10)}`,
       signingUrl: `MOCK_SIGN_URL_PLACEHOLDER`,
       mock: true,
     };
   }
-  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
-  const res = await fetch(`${HOST}/client/document/upload`, {
+  const auth = Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64');
+  const res = await fetch(`${hostFor(c)}/client/document/upload`, {
     method: 'POST',
     headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -75,13 +112,12 @@ export function digioConfigured(): boolean {
 }
 
 /** Download the signed PDF for a completed Digio document. */
-export async function downloadDigioSigned(externalId: string): Promise<Buffer | null> {
-  const id = process.env.DIGIO_CLIENT_ID;
-  const secret = process.env.DIGIO_CLIENT_SECRET;
-  if (!id || !secret) return null;
+export async function downloadDigioSigned(externalId: string, tenantId?: string): Promise<Buffer | null> {
+  const c = await cfgFor(tenantId);
+  if (!c.clientId || !c.clientSecret) return null;
   try {
-    const auth = Buffer.from(`${id}:${secret}`).toString('base64');
-    const res = await fetch(`${HOST}/client/document/download?document_id=${encodeURIComponent(externalId)}`, {
+    const auth = Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64');
+    const res = await fetch(`${hostFor(c)}/client/document/download?document_id=${encodeURIComponent(externalId)}`, {
       headers: { authorization: `Basic ${auth}` },
     });
     if (!res.ok) return null;

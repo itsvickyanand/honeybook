@@ -66,8 +66,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         email: contact?.email ?? undefined,
       },
       callbackUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/i/${token}?paid=1`,
-      notes: { reference_id: payment.id, invoiceId: invoice.id },
-    });
+      notes: { reference_id: payment.id, invoiceId: invoice.id, tenantId: invoice.tenantId },
+    }, invoice.tenantId);
   } catch (e) {
     const raw = (e as Error).message || 'Payment gateway error';
     return NextResponse.json({ error: 'gateway_error', detail: raw.slice(0, 300) }, { status: 400 });

@@ -7,6 +7,8 @@
     "src/app/api/proposals/[id]/route.ts": { "maxDuration": 60 },
     "src/app/api/proposals/[id]/signature/route.ts": { "maxDuration": 120 },
     "src/app/api/share/[token]/sign/route.ts": { "maxDuration": 120 },
+    "src/app/api/share/[token]/sign/finalize/route.ts": { "maxDuration": 60 },
+    "src/app/api/share/[token]/documents/[documentId]/route.ts": { "maxDuration": 30 },
     "src/app/api/share/[token]/pay/route.ts": { "maxDuration": 60 },
     "src/app/api/chat/**/route.ts": { "maxDuration": 120 },
     "src/app/api/search/**/route.ts": { "maxDuration": 60 },

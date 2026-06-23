@@ -25,6 +25,7 @@ import {
 import { requireContext } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { PageTransition } from '@/components/dashboard/PageTransition';
+import { OnboardingBanner } from '@/components/dashboard/OnboardingBanner';
 
 interface Step {
   id: string;
@@ -161,6 +162,11 @@ export default async function SetupPage() {
           </div>
         </div>
 
+        {!ctx.tenant.onboardingCompletedAt && (
+          <div className="mb-6">
+            <OnboardingBanner businessName={ctx.tenant.name} />
+          </div>
+        )}
         <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
           {/* Main checklist column */}
           <div className="card p-6">

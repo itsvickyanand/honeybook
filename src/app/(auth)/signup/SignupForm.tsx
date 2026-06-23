@@ -58,8 +58,8 @@ export function SignupForm({ businessTypes }: { businessTypes: BusinessType[] })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Signup failed');
-      toast.success('Account created — taking you to your dashboard');
-      router.push('/app');
+      toast.success('Account created — let\'s get you set up');
+      router.push('/app/setup');
       router.refresh();
     } catch (e) {
       toast.error((e as Error).message);

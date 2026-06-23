@@ -37,7 +37,7 @@ export async function GET(req: Request) {
   let stillPending = 0;
   for (const p of pending) {
     if (!p.providerOrderId) continue;
-    const status = await fetchPaymentLinkStatus(p.providerOrderId);
+    const status = await fetchPaymentLinkStatus(p.providerOrderId, p.tenantId);
     if (!status) { stillPending++; continue; }
     if (status.status === 'paid' || status.status === 'partially_paid') {
       await prisma.payment.update({

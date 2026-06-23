@@ -45,7 +45,7 @@ export default function OtpLoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
-      router.push('/app');
+      router.push('/app/setup');
       router.refresh();
     } catch (e) {
       toast.error((e as Error).message);

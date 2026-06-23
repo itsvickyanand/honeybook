@@ -32,7 +32,7 @@ export function InviteAcceptForm({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed');
       toast.success('Welcome aboard');
-      router.push('/app');
+      router.push('/app/setup');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {

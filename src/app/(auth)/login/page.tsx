@@ -33,7 +33,7 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Login failed');
       toast.success('Welcome back');
-      router.push('/app');
+      router.push('/app/setup');
       router.refresh();
     } catch (err) {
       toast.error((err as Error).message);

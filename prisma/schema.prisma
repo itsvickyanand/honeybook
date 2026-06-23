@@ -48,6 +48,8 @@ model Tenant {
   brandColor     String       @default("#6366f1")
   logoUrl        String?
   customDomain   String?      @unique
+  // Gates the AI onboarding banner on /app once the wizard is applied.
+  onboardingCompletedAt DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -75,6 +77,7 @@ model Tenant {
   notifications       Notification[]
   portalTemplates     PortalTemplate[]
   leadForms           LeadForm[]
+  formSubmissions     FormSubmission[]
   scoringRules        LeadScoringRule[]
   dripSequences       DripSequence[]
   dripEnrollments     DripEnrollment[]
@@ -115,6 +118,7 @@ model Tenant {
   availabilityRules   AvailabilityRule[]
   availabilityExceptions AvailabilityException[]
   proposalTemplates   ProposalTemplate[]
+  onboardingSessions  OnboardingSession[]
 
   @@index([businessTypeId])
   @@index([region])
@@ -937,9 +941,40 @@ model LeadForm {
   redirectUrl String?
   notifyEmails Json?   // [emails] to notify on submission
   active      Boolean  @default(true)
+  // ── Typed lead-form pattern (Phase 1) ───────────────────────────────────────
+  // Form types let vendors pick a pre-configured shape (Inquiry / Quote request /
+  // Discovery call / Contact). `category` powers the LEAD vs CONTACT sub-tabs.
+  // `actionsJson` declares the post-submit action chain (Phase 2 runtime, but
+  // stored from Phase 1 so the chain UI can be built incrementally).
+  formType    String   @default("INQUIRY") // INQUIRY | QUOTE_REQUEST | DISCOVERY_CALL | INSTANT_BOOKING | PARTNERSHIP | CONTACT_ONLY | CUSTOM
+  category    String   @default("LEAD")    // LEAD | CONTACT
+  actionsJson Json?    // [{ type: 'create_lead'|'ai_draft_proposal'|'book_meeting'|'enroll_drip'|... , props: {...} }]
   createdAt   DateTime @default(now())
+  submissions FormSubmission[]
 
   @@index([tenantId])
+}
+
+/// Phase 2: log every form submission so vendors can audit what came in and
+/// which actions fired. One row per submit. Cheap analytics path — the leads
+/// dashboard reads from this for conversion-rate-by-form metrics.
+model FormSubmission {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  formId            String
+  form              LeadForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  payloadJson       Json     // raw submitted body
+  // What the action chain produced — used by /app/leads to attribute
+  // conversions back to the form.
+  contactId         String?
+  leadId            String?
+  proposalId        String?
+  actionResultsJson Json?    // [{ type, ok, error?, durationMs }]
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([formId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1051,6 +1086,24 @@ model Project {
   @@index([ownerId])
 }
 
+// OnboardingSession — conversational AI onboarding state for a tenant.
+// Persists the answers and the generated draft (proposal/contract/catalog/
+// ai-config) so the wizard can save-and-resume, and so we can revisit + re-run
+// the AI later without losing previous edits.
+model OnboardingSession {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  status      String   @default("DRAFT") // DRAFT | DONE | ABANDONED
+  answers     Json     // structured: brief, tone, deposit %, lead time, cancellation, etc.
+  generatedDraft Json? // last AI output kept for the Review step
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+
+  @@index([tenantId])
+}
+
 // ProposalTemplate — customizable house style for proposals, per business.
 // Drives three layers: boilerplate content (intro/about/inclusions/terms),
 // brand presentation (cover image + accent color), and AI generation hints
@@ -1079,13 +1132,33 @@ model ProposalTemplate {
   housePhrases   Json     // string[] — phrases the AI is encouraged to weave in
   alwaysIncludeItems Json? // string[] catalog rowIds the AI should always include
   // Section recipe (order of blocks in the rendered proposal)
-  sectionOrder Json       // ['cover','about','sections','inclusions','terms','cta']
+  sectionOrder Json       // ['cover','about','sections','inclusions','terms','cta'] — legacy
+  // Block-builder output (Phase 1: schema only, no UI yet). If present, the
+  // renderer uses these and ignores the legacy fields above. Discriminated
+  // union of 14 block types — see src/lib/proposals/blocks.ts.
+  blocks       Json?     // [{ id, type, props }, ...]
+  versions     ProposalTemplateVersion[]
   // Bookkeeping
   isDefault Boolean @default(false)
   archived  Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([tenantId])
+}
+
+/// Phase 4: history snapshots so vendors can restore prior block layouts.
+/// We keep only the most recent 5 per template (older are deleted on write).
+model ProposalTemplateVersion {
+  id          String   @id @default(cuid())
+  templateId  String
+  template    ProposalTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  tenantId    String   // denormalized for RLS
+  blocks      Json     // full Block[] snapshot
+  label       String?  // optional human label
+  createdAt   DateTime @default(now())
+
+  @@index([templateId, createdAt])
   @@index([tenantId])
 }
 

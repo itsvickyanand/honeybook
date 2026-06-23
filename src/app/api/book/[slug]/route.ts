@@ -12,6 +12,7 @@ import { sendEmail } from '@/lib/comms';
 import { buildIcs } from '@/lib/calendar/ics';
 import { pushUserEvent } from '@/lib/calendar/google-user';
 import { logger } from '@/lib/logger';
+import { checkBotId } from 'botid/server';
 
 const schema = z.object({
   startAt: z.string().datetime(),
@@ -23,6 +24,22 @@ const schema = z.object({
 
 export async function POST(req: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
+
+  // BotID — log-only by default. Without the client-side <BotIdClient />
+  // component on the page, all server checks return isBot:true and would
+  // silent-drop legit users. Enforcement gated behind BOTID_ENFORCE=true.
+  try {
+    const verdict = await checkBotId();
+    if (verdict.isBot) {
+      logger.warn({ slug, reason: 'botid' }, 'book.bot-flagged');
+      if (process.env.BOTID_ENFORCE === 'true') {
+        return NextResponse.json({ ok: true });
+      }
+    }
+  } catch {
+    // BotID not configured — fall through.
+  }
+
   const m = await prisma.meetingType.findFirst({ where: { slug, active: true, archived: false }, include: { tenant: true, hostUser: { select: { fullName: true, email: true } } } });
   if (!m) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const parsed = schema.safeParse(await req.json().catch(() => null));
@@ -135,6 +152,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
   const dataUrl = `data:text/calendar;charset=utf-8;base64,${Buffer.from(icsText, 'utf8').toString('base64')}`;
   const when = start.toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' });
   await sendEmail({
+    tenantId: m.tenantId,
     to: parsed.data.email,
     subject: `Booking confirmed: ${m.name} on ${start.toLocaleDateString('en-IN')}`,
     html: `<p>Hi ${parsed.data.name},</p>
@@ -147,6 +165,7 @@ ${m.locationType === 'IN_PERSON' && m.locationDetail ? `<p>Where: ${m.locationDe
 
   if (m.hostUser?.email) {
     await sendEmail({
+      tenantId: m.tenantId,
       to: m.hostUser.email,
       subject: `New booking: ${m.name} with ${parsed.data.name}`,
       html: `<p>${parsed.data.name} (${parsed.data.email}) booked <strong>${m.name}</strong> on ${when}.</p>${parsed.data.notes ? `<p>Notes: ${parsed.data.notes}</p>` : ''}<p>View: ${process.env.APP_URL ?? ''}/app/calendar</p>`,
